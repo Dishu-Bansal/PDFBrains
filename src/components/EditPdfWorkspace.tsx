@@ -1,5 +1,5 @@
 import { CheckCircle, DownloadSimple, SpinnerGap } from "@phosphor-icons/react";
-import type { PDFDocumentProxy } from "pdfjs-dist";
+import type { PDFDocumentProxy, PDFPageProxy } from "pdfjs-dist";
 import { useEffect, useMemo, useRef, useState } from "react";
 
 import { usePdfDocument } from "../lib/pdf";
@@ -20,24 +20,59 @@ interface EditPdfWorkspaceProps {
   file: File;
 }
 
-interface TextGeometry {
-  x: number;
-  y: number;
-  w: number;
-  h: number;
-}
-
 interface FontStyle {
   bold: boolean;
   italic: boolean;
 }
 
+interface StirlingFont {
+  id?: string;
+  baseName?: string;
+}
+
+/** A pdf.js text item, as returned by getTextContent(). */
+interface PdfTextItem {
+  str?: string;
+  transform: number[];
+  width: number;
+  height: number;
+  fontName: string;
+  hasEOL?: boolean;
+}
+
+/** Text style entry from getTextContent().styles. */
+interface PdfTextStyle {
+  ascent?: number;
+  descent?: number;
+  vertical?: boolean;
+  fontFamily?: string;
+}
+
+/** One editable run: exact viewport-space geometry plus the PDF matrix. */
+interface OverlayItem {
+  text: string;
+  left: number;
+  top: number;
+  width: number; // CSS px advance width of the original run
+  fontHeight: number; // CSS px
+  fontSizePt: number; // PDF points
+  transform: number[]; // original PDF-space text matrix (for the JSON)
+  fontFamily: string;
+  fontId?: string;
+  bold: boolean;
+  italic: boolean;
+  angle: number; // degrees, 0 = horizontal
+}
+
 /**
  * Edit PDF workspace: every page rendered vertically with its extracted
- * text overlaid as click-to-edit spans. The original canvas text is blanked
- * out (using the page's background color) so the editable text replaces it
- * instead of duplicating it. Edits update the extracted JSON document;
- * "Download" applies them through the job id and clears the server cache.
+ * text overlaid as click-to-edit spans. Overlay geometry comes from pdf.js
+ * getTextContent() (the same transform math pdf.js uses for its own text
+ * layer), so every editable run sits exactly where the original text is.
+ * The original canvas text is blanked out with the background it sits on so
+ * the editable text replaces it instead of duplicating it. Edits update the
+ * extracted JSON document; "Download" applies them through the job id and
+ * clears the server cache.
  */
 export function EditPdfWorkspace({ file }: EditPdfWorkspaceProps) {
   const { doc, pageCount, loading, error: pdfError } = usePdfDocument(file);
@@ -46,8 +81,10 @@ export function EditPdfWorkspace({ file }: EditPdfWorkspaceProps) {
   const [loadError, setLoadError] = useState<string | null>(null);
   const [busy, setBusy] = useState(false);
   const [applied, setApplied] = useState<string | null>(null);
+  const [readyCount, setReadyCount] = useState(0);
   const jobRef = useRef<string | null>(null);
   const originalRef = useRef<TextEditorDocument | null>(null);
+  const readyRef = useRef<Set<number>>(new Set());
 
   // Extract the editable JSON and cache the PDF for the job on file change.
   useEffect(() => {
@@ -56,6 +93,8 @@ export function EditPdfWorkspace({ file }: EditPdfWorkspaceProps) {
     setJobId(null);
     setLoadError(null);
     setApplied(null);
+    setReadyCount(0);
+    readyRef.current = new Set();
     originalRef.current = null;
 
     (async () => {
@@ -109,6 +148,25 @@ export function EditPdfWorkspace({ file }: EditPdfWorkspaceProps) {
     });
   };
 
+  // Once a page's pdf.js items are extracted, replace that page's text
+  // elements with the rebuilt (per-run) ones. The pristine rebuild is kept
+  // as the diff baseline so the change counter only counts real edits.
+  const handlePageReady = (pageIndex: number, elements: TextEditorTextElement[]) => {
+    if (readyRef.current.has(pageIndex)) return;
+    readyRef.current.add(pageIndex);
+    setReadyCount((count) => count + 1);
+    if (originalRef.current?.pages?.[pageIndex]) {
+      originalRef.current.pages[pageIndex].textElements = elements;
+    }
+    setDocument((prev) => {
+      if (!prev || !prev.pages?.[pageIndex]) return prev;
+      const pages = prev.pages.map((page, pi) =>
+        pi === pageIndex ? { ...page, textElements: elements } : page
+      );
+      return { ...prev, pages };
+    });
+  };
+
   const done = async () => {
     if (!document || busy) return;
     setBusy(true);
@@ -135,10 +193,7 @@ export function EditPdfWorkspace({ file }: EditPdfWorkspaceProps) {
   // (Hook kept above the early returns so the hook order never changes.)
   const fontMap = useMemo(() => {
     const map: Record<string, FontStyle> = {};
-    for (const font of (document?.fonts ?? []) as Array<{
-      id?: string;
-      baseName?: string;
-    }>) {
+    for (const font of (document?.fonts ?? []) as StirlingFont[]) {
       if (!font.id) continue;
       map[font.id] = {
         bold: /bold/i.test(font.baseName ?? ""),
@@ -147,6 +202,13 @@ export function EditPdfWorkspace({ file }: EditPdfWorkspaceProps) {
     }
     return map;
   }, [document]);
+
+  // Scopes registered fonts (and their metrics) to this exact file so two
+  // different documents with the same internal font names never collide.
+  const docKey = useMemo(
+    () => shortHash(`${file.name}-${file.size}-${file.lastModified}`),
+    [file]
+  );
 
   if (pdfError) {
     return (
@@ -184,6 +246,7 @@ export function EditPdfWorkspace({ file }: EditPdfWorkspaceProps) {
 
   const pages: TextEditorPage[] = document?.pages ?? [];
   const changedCount = countChanges(document, originalRef.current);
+  const allReady = readyCount >= pageCount;
 
   return (
     <div className="mt-8">
@@ -191,9 +254,13 @@ export function EditPdfWorkspace({ file }: EditPdfWorkspaceProps) {
         <div>
           <h2 className="text-[15px] font-semibold">{file.name}</h2>
           <p className="mt-0.5 text-[13px] text-muted">
-            {loading ? "Reading..." : document
-              ? `${pageCount} page${pageCount === 1 ? "" : "s"} · click any text to edit`
-              : "Extracting editable text..."}
+            {loading
+              ? "Reading..."
+              : document
+                ? allReady
+                  ? `${pageCount} page${pageCount === 1 ? "" : "s"} · click any text to edit`
+                  : "Preparing pages..."
+                : "Extracting editable text..."}
           </p>
         </div>
         <div className="flex items-center gap-3">
@@ -205,15 +272,15 @@ export function EditPdfWorkspace({ file }: EditPdfWorkspaceProps) {
           <button
             type="button"
             onClick={done}
-            disabled={!document || busy}
+            disabled={!document || busy || !allReady}
             className="inline-flex h-11 items-center gap-2 rounded-full bg-ink px-6 text-[14px] font-medium text-paper transition hover:opacity-90 active:scale-[0.97] disabled:cursor-not-allowed disabled:opacity-40"
           >
-            {busy ? (
+            {busy || !allReady ? (
               <SpinnerGap size={17} className="animate-spin" />
             ) : (
               <DownloadSimple size={17} />
             )}
-            {busy ? "Applying..." : "Download edited PDF"}
+            {busy ? "Applying..." : allReady ? "Download edited PDF" : "Preparing pages..."}
           </button>
         </div>
       </div>
@@ -231,8 +298,10 @@ export function EditPdfWorkspace({ file }: EditPdfWorkspaceProps) {
               pageNumber={pageIndex + 1}
               page={page}
               pageIndex={pageIndex}
+              docKey={docKey}
               fontMap={fontMap}
               onUpdate={updateElement}
+              onPageReady={handlePageReady}
             />
           ))}
         </div>
@@ -269,49 +338,165 @@ function countChanges(
   return count;
 }
 
+/* ------------------------------------------------------------------ */
+/* Font helpers (module-level caches)                                  */
+/* ------------------------------------------------------------------ */
+
+const familyCache = new Map<string, string>();
+const ascentCache = new Map<string, number>();
+
+/** Short stable hash used to scope registered fonts to one document. */
+function shortHash(value: string): string {
+  let hash = 5381;
+  for (let i = 0; i < value.length; i++) {
+    hash = ((hash << 5) + hash + value.charCodeAt(i)) | 0;
+  }
+  return (hash >>> 0).toString(36);
+}
+
+/**
+ * Resolves the CSS font family for one text run. Embedded fonts are
+ * registered from the page's object store so the overlay matches the canvas
+ * rendering; otherwise the generic family pdf.js itself uses is kept.
+ */
+async function resolveFontFamily(
+  fontName: string,
+  style: PdfTextStyle | undefined,
+  page: PDFPageProxy,
+  docKey: string
+): Promise<string> {
+  const cacheKey = `${docKey}:${fontName}`;
+  const cached = familyCache.get(cacheKey);
+  if (cached) return cached;
+
+  // 1) Embedded font data: register the real font under a stable name.
+  try {
+    let font: { data?: unknown; loadedName?: string } | null = null;
+    try {
+      font = await page.commonObjs?.get(fontName);
+    } catch {
+      font = null;
+    }
+    if (!font?.data) {
+      try {
+        font = await page.objs?.get(fontName);
+      } catch {
+        font = null;
+      }
+    }
+    if (font?.data) {
+      const name = `pdfbrains-${shortHash(docKey)}-${String(font.loadedName || fontName).replace(/[^a-zA-Z0-9_-]/g, "")}`;
+      if (!document.fonts.check(`12px "${name}"`)) {
+        const face = new FontFace(name, font.data as ArrayBuffer);
+        document.fonts.add(face);
+        await face.loaded.catch(() => {});
+      }
+      familyCache.set(cacheKey, name);
+      return name;
+    }
+  } catch {
+    /* not in the page object store */
+  }
+
+  // 2) Generic family (sans-serif/serif/monospace), like pdf.js's text layer.
+  const family = style?.fontFamily || "sans-serif";
+  familyCache.set(cacheKey, family);
+  return family;
+}
+
+/**
+ * Ascent ratio (fraction of the font height above the baseline) for the font
+ * actually used by the browser. Mirrors pdf.js: measure via canvas text
+ * metrics, fall back to the PDF font's ascent, then 0.8.
+ */
+async function getAscentRatio(family: string, style: PdfTextStyle | undefined): Promise<number> {
+  const cached = ascentCache.get(family);
+  if (cached !== undefined) return cached;
+  let ratio = 0.8;
+  try {
+    await document.fonts.load(`30px ${cssFontFamily(family)}`).catch(() => {});
+    const ctx = document.createElement("canvas").getContext("2d");
+    if (ctx) {
+      ctx.font = `30px ${cssFontFamily(family)}`;
+      const metrics = ctx.measureText("");
+      const ascent = metrics.fontBoundingBoxAscent;
+      const descent = Math.abs(metrics.fontBoundingBoxDescent);
+      if (ascent > 0) ratio = ascent / (ascent + descent);
+    }
+  } catch {
+    /* keep defaults */
+  }
+  if (ratio === 0.8 && style?.ascent) ratio = style.ascent;
+  ascentCache.set(family, ratio);
+  return ratio;
+}
+
+/** Quotes a non-generic family for use in CSS font shorthand. */
+function cssFontFamily(family: string): string {
+  if (/^(sans-serif|serif|monospace|inherit|initial)$/i.test(family)) return family;
+  return `"${family.replace(/"/g, "")}", sans-serif`;
+}
+
+/** Finds the Stirling element this pdf.js run corresponds to, for fontId. */
+function matchStirlingElement(
+  item: PdfTextItem,
+  elements: TextEditorTextElement[],
+  tolerance = 0.5
+): TextEditorTextElement | null {
+  const norm = (s: string) => s.toLowerCase().replace(/\s+/g, " ").trim();
+  const itemText = norm(item.str ?? "");
+  const itemY = item.transform[5] ?? 0;
+  const itemX = item.transform[4] ?? 0;
+  let best: TextEditorTextElement | null = null;
+  let bestScore = -1;
+  for (const el of elements) {
+    const matrix = el.textMatrix;
+    if (!matrix || matrix.length < 6) continue;
+    if (Math.abs(matrix[5] - itemY) > tolerance) continue; // same baseline
+    const elText = norm(el.text ?? "");
+    let score = -1;
+    if (elText && elText === itemText) score = 3;
+    else if (elText && (elText.includes(itemText) || itemText.includes(elText))) score = 2;
+    else if (!elText || !itemText) score = 1; // weak positional match
+    if (score < 0) continue;
+    score = score * 1000 - Math.abs(matrix[4] - itemX);
+    if (score > bestScore) {
+      bestScore = score;
+      best = el;
+    }
+  }
+  return best;
+}
+
 /** One page: the rendered canvas (text blanked) with editable overlays. */
 function EditPageCard({
   doc,
   pageNumber,
   page,
   pageIndex,
+  docKey,
   fontMap,
   onUpdate,
+  onPageReady,
 }: {
   doc: PDFDocumentProxy;
   pageNumber: number;
   page: TextEditorPage;
   pageIndex: number;
+  docKey: string;
   fontMap: Record<string, FontStyle>;
   onUpdate: (pageIndex: number, elementIndex: number, text: string) => void;
+  onPageReady: (pageIndex: number, elements: TextEditorTextElement[]) => void;
 }) {
   const boxRef = useRef<HTMLDivElement>(null);
   const pageWidth = page.width ?? 595.28;
   const pageHeight = page.height ?? 841.89;
-  const scale = PAGE_WIDTH / pageWidth;
-  const elements: TextEditorTextElement[] = page.textElements ?? [];
+  const fallbackScale = PAGE_WIDTH / pageWidth;
+  const [items, setItems] = useState<OverlayItem[]>([]);
+  const [dims, setDims] = useState<{ w: number; h: number } | null>(null);
 
-  // Snapshot the original geometry once; text edits do not move the boxes.
-  // The box height approximates the visible glyph extent (cap height) so the
-  // blanked area and overlays land where the text actually is.
-  const geometryRef = useRef<TextGeometry[]>([]);
-  if (geometryRef.current.length === 0 && elements.length > 0) {
-    geometryRef.current = elements
-      .filter((el) => el.textMatrix && el.textMatrix.length >= 6)
-      .map((el) => {
-        const matrix = el.textMatrix as number[];
-        const fontSize = el.fontSize ?? el.fontMatrixSize ?? 12;
-        return {
-          x: matrix[4],
-          y: matrix[5],
-          w: el.width ?? 0,
-          h: fontSize * 0.8,
-        };
-      });
-  }
-
-  // Render the page once, then blank out the original text areas using the
-  // page's background color so the editable overlays replace the text.
+  // Render the page, read its text content, then blank the original runs and
+  // overlay editable spans at the exact positions pdf.js computes for them.
   useEffect(() => {
     let cancelled = false;
     let task: { cancel: () => void; promise: Promise<unknown> } | null = null;
@@ -321,8 +506,9 @@ function EditPageCard({
         const pdfPage = await doc.getPage(pageNumber);
         if (cancelled) return;
         const vp1 = pdfPage.getViewport({ scale: 1 });
-        const scale2 = PAGE_WIDTH / vp1.width;
-        const viewport = pdfPage.getViewport({ scale: scale2 });
+        const scale = PAGE_WIDTH / vp1.width;
+        const viewport = pdfPage.getViewport({ scale });
+
         const canvas = document.createElement("canvas");
         const dpr = Math.min(window.devicePixelRatio || 1, 2);
         canvas.width = Math.floor(viewport.width * dpr);
@@ -336,35 +522,93 @@ function EditPageCard({
         await task.promise;
         if (cancelled) return;
 
-        // Blank out each original text run with the background it sits on.
-        // The sample point is taken just above the text box, outside the
-        // glyphs, so it is never a dark text pixel.
-        for (const geo of geometryRef.current) {
-          if (geo.w <= 0 || geo.h <= 0) continue;
-          const left = geo.x * scale2;
-          const top = (pageHeight - geo.y - geo.h) * scale2;
-          let fill = "rgba(255,255,255,1)";
-          try {
-            const sx = Math.min(
-              Math.floor((geo.x + geo.w / 2) * scale2 * dpr),
-              canvas.width - 1
-            );
-            const sy = Math.min(
-              Math.max(Math.floor((top - 2) * dpr), 0),
-              canvas.height - 1
-            );
-            const px = ctx.getImageData(sx, sy, 1, 1).data;
-            if (px[3] > 10) fill = `rgba(${px[0]}, ${px[1]}, ${px[2]}, ${px[3] / 255})`;
-          } catch {
-            /* keep white fallback */
+        const { Util } = await import("pdfjs-dist");
+        const textContent = await pdfPage.getTextContent();
+        if (cancelled) return;
+
+        const stirlingElements = page.textElements ?? [];
+        const built: OverlayItem[] = [];
+        for (const entry of textContent.items) {
+          const item = entry as PdfTextItem;
+          if (typeof item.str !== "string" || item.str === "") continue;
+          const tx = Util.transform(viewport.transform, item.transform);
+          const angle = Math.atan2(tx[1], tx[0]);
+          const fontHeight = Math.hypot(tx[2], tx[3]);
+          if (fontHeight <= 0) continue;
+          const style = (textContent.styles ?? {})[item.fontName] as PdfTextStyle | undefined;
+          const fontFamily = await resolveFontFamily(item.fontName, style, pdfPage, docKey);
+          if (cancelled) return;
+          const ascentRatio = await getAscentRatio(fontFamily, style);
+          const fontAscent = fontHeight * ascentRatio;
+          let left: number;
+          let top: number;
+          if (angle === 0) {
+            left = tx[4];
+            top = tx[5] - fontAscent;
+          } else {
+            left = tx[4] + fontAscent * Math.sin(angle);
+            top = tx[5] - fontAscent * Math.cos(angle);
           }
-          ctx.fillStyle = fill;
-          ctx.fillRect(left, top - 1, geo.w * scale2 + 1, geo.h * scale2 + 3);
+          const matched = matchStirlingElement(item, stirlingElements);
+          const fontId = matched?.fontId;
+          built.push({
+            text: item.str,
+            left,
+            top,
+            width: item.width * scale,
+            fontHeight,
+            fontSizePt: Math.hypot(item.transform[2], item.transform[3]),
+            transform: item.transform.slice(),
+            fontFamily,
+            fontId,
+            bold: fontId
+              ? fontMap[fontId]?.bold ?? false
+              : /bold/i.test(item.fontName) || /bold/i.test(style?.fontFamily ?? ""),
+            italic: fontId
+              ? fontMap[fontId]?.italic ?? false
+              : /italic|oblique/i.test(item.fontName) ||
+                /italic|oblique/i.test(style?.fontFamily ?? ""),
+            angle: angle * (180 / Math.PI),
+          });
+        }
+        if (cancelled) return;
+
+        // Blank out each original run with the background it sits on. The
+        // sample point is taken above the run, away from the glyphs, and
+        // dark pixels are skipped so a glyph is never used as the fill.
+        for (const it of built) {
+          if (it.width <= 0) continue;
+          ctx.save();
+          if (it.angle !== 0) {
+            ctx.translate(it.left, it.top);
+            ctx.rotate((it.angle * Math.PI) / 180);
+            ctx.fillStyle = sampleFill(ctx, it.left + it.width / 2, it.top, dpr, canvas.width, canvas.height);
+            ctx.fillRect(-1, -1, it.width + 2, it.fontHeight + 2);
+          } else {
+            ctx.fillStyle = sampleFill(ctx, it.left + it.width / 2, it.top, dpr, canvas.width, canvas.height);
+            ctx.fillRect(it.left - 1, it.top - 1, it.width + 2, it.fontHeight + 2);
+          }
+          ctx.restore();
         }
 
-        if (!cancelled) boxRef.current?.replaceChildren(canvas);
+        if (!cancelled) {
+          boxRef.current?.replaceChildren(canvas);
+          setDims({ w: viewport.width, h: viewport.height });
+          setItems(built);
+          onPageReady(
+            pageIndex,
+            built.map((it) => ({
+              text: it.text,
+              textMatrix: it.transform,
+              fontSize: it.fontSizePt,
+              ...(it.fontId ? { fontId: it.fontId } : {}),
+            }))
+          );
+        }
       } catch {
-        /* render failed, leave placeholder */
+        // Render or extraction failed. Keep the placeholder but mark the
+        // page ready so the download button is not blocked forever.
+        if (!cancelled) onPageReady(pageIndex, page.textElements ?? []);
       }
     })();
 
@@ -381,54 +625,82 @@ function EditPageCard({
         <span className="rounded-md bg-ink/75 px-2 py-0.5 font-mono text-[11px] text-paper">
           {pageNumber}
         </span>
-        <p className="text-[12px] text-muted">
-          {elements.length} text block{elements.length === 1 ? "" : "s"} · click to edit
-        </p>
+        {dims ? (
+          items.length > 0 ? (
+            <p className="text-[12px] text-muted">
+              {items.length} text block{items.length === 1 ? "" : "s"} · click to edit
+            </p>
+          ) : (
+            <p className="text-[12px] text-muted">No editable text found on this page</p>
+          )
+        ) : (
+          <p className="text-[12px] text-muted" aria-busy="true">
+            Reading text...
+          </p>
+        )}
       </div>
       <div
         className="relative overflow-hidden rounded-lg border border-line bg-raised"
-        style={{ width: PAGE_WIDTH, height: pageHeight * scale, maxWidth: "100%" }}
+        style={{
+          width: dims?.w ?? PAGE_WIDTH,
+          height: dims?.h ?? pageHeight * fallbackScale,
+          maxWidth: "100%",
+        }}
       >
         <div ref={boxRef} className="absolute inset-0" />
-        {elements.map((el, elementIndex) => {
-          if (!el.textMatrix || el.textMatrix.length < 6) return null;
-          const matrix = el.textMatrix as number[];
-          const x = matrix[4];
-          const y = matrix[5];
-          const fontSizePt = el.fontSize ?? el.fontMatrixSize ?? 12;
-          const boxHeightPt = fontSizePt * 0.8;
-          const left = x * scale;
-          const top = (pageHeight - y - boxHeightPt) * scale;
-          const fontSize = Math.max(6, fontSizePt * scale);
-          const style = fontMap[el.fontId ?? ""];
-
-          return (
-            <span
-              key={elementIndex}
-              contentEditable
-              suppressContentEditableWarning
-              ref={(node) => {
-                if (node && node.textContent !== el.text) node.textContent = el.text;
-              }}
-              onInput={(event) =>
-                onUpdate(pageIndex, elementIndex, event.currentTarget.textContent ?? "")
-              }
-              className="absolute cursor-text whitespace-pre rounded text-ink outline-none transition-colors hover:bg-accent/10 focus:bg-accent/15 focus:ring-1 focus:ring-accent"
-              style={{
-                left,
-                top,
-                fontSize,
-                lineHeight: 1,
-                minHeight: boxHeightPt * scale,
-                maxWidth: PAGE_WIDTH - left,
-                fontFamily: "Outfit Variable, sans-serif",
-                fontWeight: style?.bold ? 700 : 400,
-                fontStyle: style?.italic ? "italic" : "normal",
-              }}
-            />
-          );
-        })}
+        {items.map((it, index) => (
+          <span
+            key={index}
+            contentEditable
+            suppressContentEditableWarning
+            ref={(node) => {
+              if (node && node.textContent !== it.text) node.textContent = it.text;
+            }}
+            onInput={(event) => {
+              const text = event.currentTarget.textContent ?? "";
+              setItems((prev) => prev.map((p, pi) => (pi === index ? { ...p, text } : p)));
+              onUpdate(pageIndex, index, text);
+            }}
+            className="absolute cursor-text whitespace-pre rounded text-ink outline-none transition-colors hover:bg-accent/10 focus:bg-accent/15 focus:ring-1 focus:ring-accent"
+            style={{
+              left: it.left,
+              top: it.top,
+              fontSize: it.fontHeight,
+              lineHeight: 1,
+              fontFamily: cssFontFamily(it.fontFamily),
+              fontWeight: it.bold ? 700 : 400,
+              fontStyle: it.italic ? "italic" : "normal",
+              minWidth: Math.max(1, it.width),
+              transform: it.angle !== 0 ? `rotate(${it.angle}deg)` : undefined,
+              transformOrigin: "0 0",
+            }}
+          />
+        ))}
       </div>
     </div>
   );
+}
+
+/**
+ * Samples the canvas above a text run until it finds a non-dark pixel,
+ * returning it as the fill color for blanking. Falls back to white.
+ */
+function sampleFill(
+  ctx: CanvasRenderingContext2D,
+  centerXPx: number,
+  boxTopPx: number,
+  dpr: number,
+  canvasWidth: number,
+  canvasHeight: number
+): string {
+  for (let dy = 2; dy <= 18; dy += 4) {
+    const sx = Math.min(Math.floor(centerXPx * dpr), canvasWidth - 1);
+    const sy = Math.min(Math.max(Math.floor((boxTopPx - dy) * dpr), 0), canvasHeight - 1);
+    const px = ctx.getImageData(sx, sy, 1, 1).data;
+    if (px[3] > 10) {
+      const luminance = 0.299 * px[0] + 0.587 * px[1] + 0.114 * px[2];
+      if (luminance > 80) return `rgba(${px[0]}, ${px[1]}, ${px[2]}, ${px[3] / 255})`;
+    }
+  }
+  return "rgba(255,255,255,1)";
 }

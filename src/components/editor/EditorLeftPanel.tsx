@@ -60,7 +60,7 @@ export function EditorLeftPanel({
                     : "border-line bg-surface hover:border-accent/60",
                 ].join(" ")}
               >
-                <MiniPage doc={doc} pageNumber={pageIndex + 1} width={208} />
+                <MiniPage doc={doc} pageNumber={pageIndex + 1} width={128} />
                 <span className="mt-1.5 block px-0.5 font-mono text-[11px] text-muted group-hover:text-ink">
                   Page {pageIndex + 1}
                 </span>

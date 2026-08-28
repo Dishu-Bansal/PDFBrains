@@ -2,6 +2,8 @@
 
 export type EditorToolId = "select" | "textbox" | "rect" | "ellipse" | "line" | "arrow";
 
+export type EditorMode = "text" | "annotation";
+
 export type EditorShapeKind = "rect" | "ellipse" | "line" | "arrow";
 
 export type EditorFontFamily = "Helvetica" | "Times" | "Courier";

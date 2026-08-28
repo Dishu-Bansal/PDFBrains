@@ -19,6 +19,27 @@ export async function exportEditedPdf(
   surfaceWidth: number
 ): Promise<Blob> {
   const pdf = await PDFDocument.load(await file.arrayBuffer());
+  return drawAnnotations(pdf, annotations, surfaceWidth);
+}
+
+/**
+ * Draws the workspace annotations onto an already-processed PDF (for example
+ * the output of the text-editor apply flow), returning the result as a Blob.
+ */
+export async function exportAnnotationsToPdf(
+  bytes: Uint8Array,
+  annotations: EditorAnnotation[],
+  surfaceWidth: number
+): Promise<Blob> {
+  const pdf = await PDFDocument.load(bytes);
+  return drawAnnotations(pdf, annotations, surfaceWidth);
+}
+
+async function drawAnnotations(
+  pdf: PDFDocument,
+  annotations: EditorAnnotation[],
+  surfaceWidth: number
+): Promise<Blob> {
 
   // Embed the six standard fonts so bold/italic/serif/mono all survive.
   const helv = await pdf.embedFont(StandardFonts.Helvetica);

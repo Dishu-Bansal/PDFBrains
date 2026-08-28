@@ -5,6 +5,7 @@ import {
   DownloadSimple,
   Eraser,
   LineSegment,
+  SpinnerGap,
   Square,
   TextAlignCenter,
   TextAlignLeft,
@@ -20,6 +21,7 @@ import type {
   EditorAlign,
   EditorAnnotation,
   EditorFontFamily,
+  EditorMode,
   EditorShapeDefaults,
   EditorTextDefaults,
   EditorToolId,
@@ -27,6 +29,7 @@ import type {
 import { FONT_FAMILIES, TEXT_COLORS, isTextAnnotation } from "./types";
 
 interface EditorRightPanelProps {
+  mode: EditorMode;
   activeTool: EditorToolId;
   onToolChange: (tool: EditorToolId) => void;
   selected: EditorAnnotation | null;
@@ -39,6 +42,10 @@ interface EditorRightPanelProps {
   onClearAll: () => void;
   onExport: () => void;
   exporting: boolean;
+  exportDisabled: boolean;
+  textChangedCount: number;
+  textLoading: boolean;
+  textError: string | null;
   result: string | null;
 }
 
@@ -63,6 +70,7 @@ const ALIGNS: { id: EditorAlign; label: string; icon: Icon }[] = [
  * item), and the export actions.
  */
 export function EditorRightPanel({
+  mode,
   activeTool,
   onToolChange,
   selected,
@@ -75,6 +83,10 @@ export function EditorRightPanel({
   onClearAll,
   onExport,
   exporting,
+  exportDisabled,
+  textChangedCount,
+  textLoading,
+  textError,
   result,
 }: EditorRightPanelProps) {
   const selectedText = selected && isTextAnnotation(selected) ? selected : null;
@@ -108,6 +120,8 @@ export function EditorRightPanel({
   return (
     <aside className="flex w-72 shrink-0 flex-col border-l border-line bg-paper">
       <div className="min-h-0 flex-1 overflow-y-auto p-4">
+      {mode === "annotation" ? (
+        <>
         <h2 className="text-[13px] font-semibold">Tools</h2>
 
         <div className="mt-3 grid grid-cols-3 gap-2">
@@ -324,20 +338,48 @@ export function EditorRightPanel({
             </div>
           </div>
         )}
+        </>
+      ) : (
+        <div className="space-y-4 pt-1">
+          <div>
+            <h2 className="text-[13px] font-semibold">Edit Text</h2>
+            <p className="mt-1.5 text-[13px] leading-relaxed text-muted">
+              Click any text on the pages to edit it. Your changes are applied
+              to the original text when you download.
+            </p>
+          </div>
+          {textLoading && !textError && (
+            <p className="flex items-center gap-2 text-[12px] text-muted" aria-busy="true">
+              <SpinnerGap size={14} className="animate-spin" />
+              Extracting editable text...
+            </p>
+          )}
+          {textError && (
+            <p className="rounded-xl border border-line bg-surface px-3 py-2.5 text-[12px] leading-relaxed text-danger">
+              {textError}
+            </p>
+          )}
+          {textChangedCount > 0 && (
+            <p className="font-mono text-[12px] text-accentstrong">
+              {textChangedCount} change{textChangedCount === 1 ? "" : "s"}
+            </p>
+          )}
+        </div>
+      )}
       </div>
 
       <div className="shrink-0 space-y-2 border-t border-line p-4">
         <button
           type="button"
           onClick={onExport}
-          disabled={exporting}
+          disabled={exporting || exportDisabled}
           className="inline-flex h-10 w-full items-center justify-center gap-2 rounded-full bg-ink px-4 text-[13px] font-medium text-paper transition hover:opacity-90 active:scale-[0.98] disabled:cursor-not-allowed disabled:opacity-40"
         >
           {exporting ? "Exporting..." : "Download edited PDF"}
           {!exporting && <DownloadSimple size={16} />}
         </button>
 
-        {selected && (
+        {mode === "annotation" && selected && (
           <button
             type="button"
             onClick={onRemoveSelected}
@@ -348,6 +390,7 @@ export function EditorRightPanel({
           </button>
         )}
 
+        {mode === "annotation" && (
         <button
           type="button"
           onClick={onClearAll}
@@ -357,6 +400,7 @@ export function EditorRightPanel({
           <Eraser size={14} />
           Clear all edits
         </button>
+        )}
 
         {result && (
           <p

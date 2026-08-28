@@ -267,17 +267,20 @@ function EditPageCard({
   const elements: TextEditorTextElement[] = page.textElements ?? [];
 
   // Snapshot the original geometry once; text edits do not move the boxes.
+  // Only elements that carry a text matrix can be positioned.
   const geometryRef = useRef<TextGeometry[]>([]);
   if (geometryRef.current.length === 0 && elements.length > 0) {
-    geometryRef.current = elements.map((el) => {
-      const matrix = el.textMatrix ?? [1, 0, 0, 1, 0, 0];
-      return {
-        x: matrix[4] ?? 0,
-        y: matrix[5] ?? 0,
-        w: el.width ?? 0,
-        h: el.height ?? (el.fontSize ?? 12),
-      };
-    });
+    geometryRef.current = elements
+      .filter((el) => el.textMatrix && el.textMatrix.length >= 6)
+      .map((el) => {
+        const matrix = el.textMatrix as number[];
+        return {
+          x: matrix[4],
+          y: matrix[5],
+          w: el.width ?? 0,
+          h: el.height ?? (el.fontSize ?? 12),
+        };
+      });
   }
 
   // Render the page once, then blank out the original text areas using the
@@ -307,27 +310,29 @@ function EditPageCard({
         if (cancelled) return;
 
         // Blank out each original text run with the background it sits on.
+        // The sample point is taken just above the text box, outside the
+        // glyphs, so it is never a dark text pixel.
         for (const geo of geometryRef.current) {
           if (geo.w <= 0 || geo.h <= 0) continue;
-          let fill = "#ffffff";
+          const left = geo.x * scale2;
+          const top = (pageHeight - geo.y - geo.h) * scale2;
+          let fill = "rgba(255,255,255,1)";
           try {
-            const sx = Math.min(Math.floor(geo.x * scale2 * dpr) + 1, canvas.width - 1);
+            const sx = Math.min(
+              Math.floor((geo.x + geo.w / 2) * scale2 * dpr),
+              canvas.width - 1
+            );
             const sy = Math.min(
-              Math.max(Math.floor((pageHeight - geo.y) * scale2 * dpr) - 1, 0),
+              Math.max(Math.floor((top - 2) * dpr), 0),
               canvas.height - 1
             );
             const px = ctx.getImageData(sx, sy, 1, 1).data;
-            fill = `rgba(${px[0]}, ${px[1]}, ${px[2]}, ${px[3] / 255})`;
+            if (px[3] > 10) fill = `rgba(${px[0]}, ${px[1]}, ${px[2]}, ${px[3] / 255})`;
           } catch {
             /* keep white fallback */
           }
           ctx.fillStyle = fill;
-          ctx.fillRect(
-            geo.x * scale2,
-            (pageHeight - geo.y - geo.h) * scale2,
-            geo.w * scale2,
-            geo.h * scale2 + 1
-          );
+          ctx.fillRect(left, top - 1, geo.w * scale2 + 1, geo.h * scale2 + 3);
         }
 
         if (!cancelled) boxRef.current?.replaceChildren(canvas);
@@ -359,12 +364,14 @@ function EditPageCard({
       >
         <div ref={boxRef} className="absolute inset-0" />
         {elements.map((el, elementIndex) => {
-          const matrix = el.textMatrix ?? [1, 0, 0, 1, 0, 0];
-          const x = matrix[4] ?? 0;
-          const y = matrix[5] ?? 0;
+          if (!el.textMatrix || el.textMatrix.length < 6) return null;
+          const matrix = el.textMatrix as number[];
+          const x = matrix[4];
+          const y = matrix[5];
           const fontSizePt = el.fontSize ?? el.fontMatrixSize ?? 12;
+          const boxHeightPt = el.height ?? fontSizePt * 0.8;
           const left = x * scale;
-          const top = (pageHeight - y - fontSizePt) * scale;
+          const top = (pageHeight - y - boxHeightPt) * scale;
           const fontSize = Math.max(6, fontSizePt * scale);
 
           return (
@@ -378,12 +385,13 @@ function EditPageCard({
               onInput={(event) =>
                 onUpdate(pageIndex, elementIndex, event.currentTarget.textContent ?? "")
               }
-              className="absolute cursor-text whitespace-pre rounded px-0.5 text-ink outline-none transition-colors hover:bg-accent/10 focus:bg-accent/15 focus:ring-1 focus:ring-accent"
+              className="absolute cursor-text whitespace-pre rounded text-ink outline-none transition-colors hover:bg-accent/10 focus:bg-accent/15 focus:ring-1 focus:ring-accent"
               style={{
                 left,
                 top,
                 fontSize,
-                lineHeight: 1.15,
+                lineHeight: 1,
+                minHeight: boxHeightPt * scale,
                 maxWidth: PAGE_WIDTH - left,
                 fontFamily: "Outfit Variable, sans-serif",
               }}

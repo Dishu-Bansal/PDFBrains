@@ -22,7 +22,9 @@ import {
   convertPdfToWord,
   hasApiKey,
   ocrPdfViaApi,
+  protectPdfViaApi,
   repairPdfViaApi,
+  unlockPdfViaApi,
 } from "../lib/api";
 import { renderPageToJpeg, usePdfDocument } from "../lib/pdf";
 import {
@@ -72,6 +74,8 @@ const PROCESSED_SLUGS = new Set([
   "pdf-to-powerpoint",
   "pdf-to-excel",
   "pdf-to-pdfa",
+  "unlock-pdf",
+  "protect-pdf",
   "rotate-pdf",
   "add-page-numbers",
   "add-watermark",
@@ -293,6 +297,18 @@ function ToolWorkspace({ tool }: { tool: Tool }) {
   const [pdfaFormat, setPdfaFormat] = useState("pdfa1b");
   const [pdfaPdfUa, setPdfaPdfUa] = useState(false);
   const [pdfaStrict, setPdfaStrict] = useState(false);
+  const [pdfPassword, setPdfPassword] = useState("");
+  const [pdfOwnerPassword, setPdfOwnerPassword] = useState("");
+  const [pdfKeyLength, setPdfKeyLength] = useState(256);
+  const [pdfPrevent, setPdfPrevent] = useState({
+    assembly: false,
+    extractContent: false,
+    extractAccessibility: false,
+    fillInForm: false,
+    modify: false,
+    modifyAnnotations: false,
+    printing: false,
+  });
   const [busy, setBusy] = useState(false);
   const [result, setResult] = useState<{ kind: "ok" | "error"; message: string } | null>(null);
   const scanInputRef = useRef<HTMLInputElement>(null);
@@ -506,6 +522,9 @@ function ToolWorkspace({ tool }: { tool: Tool }) {
       case "pdf-to-excel":
       case "pdf-to-pdfa":
         return files.length >= 1 && hasApiKey();
+      case "unlock-pdf":
+      case "protect-pdf":
+        return files.length >= 1 && hasApiKey() && pdfPassword.length > 0;
       case "pdf-to-jpg":
         return selected.size > 0 && !!pdfState.doc;
       case "rotate-pdf":
@@ -562,6 +581,10 @@ function ToolWorkspace({ tool }: { tool: Tool }) {
         return files.length === 1 ? "Convert to Excel" : `Convert ${files.length} files to Excel`;
       case "pdf-to-pdfa":
         return files.length === 1 ? "Convert to PDF/A" : `Convert ${files.length} files to PDF/A`;
+      case "unlock-pdf":
+        return files.length === 1 ? "Remove password" : `Remove passwords from ${files.length} files`;
+      case "protect-pdf":
+        return files.length === 1 ? "Protect PDF" : `Protect ${files.length} files`;
       case "pdf-to-jpg":
         return `Export ${plural(selected.size, "page")} as JPG`;
       case "rotate-pdf":
@@ -779,6 +802,40 @@ function ToolWorkspace({ tool }: { tool: Tool }) {
             "PDF/A"
           );
           setResult(result);
+          break;
+        }
+        case "unlock-pdf": {
+          for (const file of files) {
+            const blob = await unlockPdfViaApi(file, pdfPassword);
+            downloadBlob(blob, `${baseName(file)}-unlocked.pdf`);
+          }
+          setResult({
+            kind: "ok",
+            message: `Password removed from ${files.length} file${files.length === 1 ? "" : "s"}. Check your downloads.`,
+          });
+          break;
+        }
+        case "protect-pdf": {
+          const options = {
+            password: pdfPassword,
+            ownerPassword: pdfOwnerPassword || undefined,
+            keyLength: pdfKeyLength,
+            preventAssembly: pdfPrevent.assembly,
+            preventExtractContent: pdfPrevent.extractContent,
+            preventExtractForAccessibility: pdfPrevent.extractAccessibility,
+            preventFillInForm: pdfPrevent.fillInForm,
+            preventModify: pdfPrevent.modify,
+            preventModifyAnnotations: pdfPrevent.modifyAnnotations,
+            preventPrinting: pdfPrevent.printing,
+          };
+          for (const file of files) {
+            const blob = await protectPdfViaApi(file, options);
+            downloadBlob(blob, `${baseName(file)}-protected.pdf`);
+          }
+          setResult({
+            kind: "ok",
+            message: `Protected ${files.length} file${files.length === 1 ? "" : "s"} with a password. Check your downloads.`,
+          });
           break;
         }
         case "pdf-to-jpg": {
@@ -1513,6 +1570,113 @@ function ToolWorkspace({ tool }: { tool: Tool }) {
           </label>
         )}
 
+        {tool.slug === "unlock-pdf" && (
+          <fieldset>
+            <label htmlFor="unlock-password" className="block text-[13px] font-medium">
+              Password
+            </label>
+            <input
+              id="unlock-password"
+              type="password"
+              value={pdfPassword}
+              onChange={(event) => setPdfPassword(event.target.value)}
+              autoComplete="off"
+              className="mt-2 h-10 w-full rounded-xl border border-line bg-paper px-3 text-[14px] text-ink transition focus:border-accent"
+            />
+            <p className="mt-2 text-[12px] leading-relaxed text-muted">
+              Enter the password the file was protected with.
+            </p>
+          </fieldset>
+        )}
+
+        {tool.slug === "protect-pdf" && (
+          <div className="space-y-4">
+            <fieldset>
+              <label htmlFor="protect-password" className="block text-[13px] font-medium">
+                Password
+              </label>
+              <input
+                id="protect-password"
+                type="password"
+                value={pdfPassword}
+                onChange={(event) => setPdfPassword(event.target.value)}
+                autoComplete="new-password"
+                className="mt-2 h-10 w-full rounded-xl border border-line bg-paper px-3 text-[14px] text-ink transition focus:border-accent"
+              />
+              <p className="mt-2 text-[12px] leading-relaxed text-muted">
+                Anyone with this password can open the file.
+              </p>
+            </fieldset>
+
+            <fieldset>
+              <label htmlFor="owner-password" className="block text-[13px] font-medium">
+                Owner password (optional)
+              </label>
+              <input
+                id="owner-password"
+                type="password"
+                value={pdfOwnerPassword}
+                onChange={(event) => setPdfOwnerPassword(event.target.value)}
+                autoComplete="new-password"
+                className="mt-2 h-10 w-full rounded-xl border border-line bg-paper px-3 text-[14px] text-ink transition focus:border-accent"
+              />
+              <p className="mt-2 text-[12px] leading-relaxed text-muted">
+                Restricts what can be done with the file. Leave empty to use the same password.
+              </p>
+            </fieldset>
+
+            <fieldset>
+              <label htmlFor="key-length" className="block text-[13px] font-medium">
+                Key length
+              </label>
+              <select
+                id="key-length"
+                value={pdfKeyLength}
+                onChange={(event) => setPdfKeyLength(Number.parseInt(event.target.value, 10))}
+                className="mt-2 h-10 w-full rounded-xl border border-line bg-paper px-3 text-[14px] text-ink transition focus:border-accent"
+              >
+                <option value={40}>40 bit (legacy)</option>
+                <option value={128}>128 bit</option>
+                <option value={256}>256 bit (AES)</option>
+              </select>
+            </fieldset>
+
+            <fieldset>
+              <legend className="text-[13px] font-medium">Restrict</legend>
+              <div className="mt-2 space-y-2.5">
+                {[
+                  { key: "printing", label: "Printing" },
+                  { key: "modify", label: "Modifying the document" },
+                  { key: "modifyAnnotations", label: "Modifying annotations" },
+                  { key: "extractContent", label: "Copying and extracting content" },
+                  { key: "extractAccessibility", label: "Extraction for accessibility" },
+                  { key: "fillInForm", label: "Filling in form fields" },
+                  { key: "assembly", label: "Document assembly" },
+                ].map((option) => (
+                  <label
+                    key={option.key}
+                    className="flex items-center justify-between gap-2 text-[13px]"
+                  >
+                    <span>{option.label}</span>
+                    <input
+                      type="checkbox"
+                      checked={pdfPrevent[option.key as keyof typeof pdfPrevent]}
+                      onChange={(event) =>
+                        setPdfPrevent((prev) => ({
+                          ...prev,
+                          [option.key]: event.target.checked,
+                        }))
+                      }
+                      className="size-4 accent-(--accent)"
+                    />
+                  </label>
+                ))}
+              </div>
+            </fieldset>
+          </div>
+        )}
+      </div>
+
         {tool.slug === "pdf-to-pdfa" && (
           <div className="space-y-4">
             <fieldset>
@@ -1554,7 +1718,6 @@ function ToolWorkspace({ tool }: { tool: Tool }) {
             </div>
           </div>
         )}
-      </div>
 
       {processed ? (
         <button

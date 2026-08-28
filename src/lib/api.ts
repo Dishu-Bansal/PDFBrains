@@ -192,6 +192,56 @@ export async function convertPdfToPdfa(
   );
 }
 
+/** Removes the password from a protected PDF. */
+export async function unlockPdfViaApi(file: File, password: string): Promise<Blob> {
+  if (!API_KEY) {
+    throw new Error(
+      "The backend API key is not configured. Add VITE_PDFBRAINS_API_KEY to your environment."
+    );
+  }
+  const form = buildForm(file, { password });
+  let response: Response;
+  try {
+    response = await fetch(`${API_URL}/api/v1/security/remove-password`, {
+      method: "POST",
+      headers: API_KEY ? { "X-API-Key": API_KEY } : {},
+      body: form,
+    });
+  } catch {
+    throw new Error(
+      `Could not reach the backend at ${API_URL}. Check the URL and that CORS is enabled on the Stirling PDF instance.`
+    );
+  }
+  if (response.status === 400) {
+    throw new Error("Could not unlock the file. The password may be wrong.");
+  }
+  if (!response.ok) {
+    throw new Error(describeStatus(response.status));
+  }
+  return response.blob();
+}
+
+export interface ProtectOptions {
+  /** Password needed to open the file. */
+  password: string;
+  /** Optional owner password restricting actions; defaults to password. */
+  ownerPassword?: string;
+  /** Encryption key length: 40, 128 or 256. */
+  keyLength?: number;
+  preventAssembly?: boolean;
+  preventExtractContent?: boolean;
+  preventExtractForAccessibility?: boolean;
+  preventFillInForm?: boolean;
+  preventModify?: boolean;
+  preventModifyAnnotations?: boolean;
+  preventPrinting?: boolean;
+}
+
+/** Protects a PDF with a password and optional permission restrictions. */
+export async function protectPdfViaApi(file: File, options: ProtectOptions): Promise<Blob> {
+  return requestBlob("/api/v1/security/add-password", buildForm(file, { ...options }));
+}
+
 /** Converts an Office file (docx, pptx, xlsx, ...) to a PDF blob. */
 export async function convertOfficeToPdf(file: File): Promise<Blob> {
   if (!API_KEY) {

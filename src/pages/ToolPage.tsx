@@ -4,6 +4,7 @@ import { Link, Navigate, useParams } from "react-router-dom";
 
 import { CameraScanner } from "../components/CameraScanner";
 import { Dropzone } from "../components/Dropzone";
+import { EditPdfWorkspace } from "../components/EditPdfWorkspace";
 import { FileStrip } from "../components/FileStrip";
 import { Footer } from "../components/Footer";
 import { Nav } from "../components/Nav";
@@ -89,7 +90,6 @@ const PAGE_MODES: Record<string, PageMode> = {
   "rotate-pdf": "rotate",
   "add-page-numbers": "preview",
   "crop-pdf": "preview",
-  "edit-pdf": "preview",
   "pdf-forms": "preview",
 };
 
@@ -1833,6 +1833,29 @@ function ToolWorkspace({ tool }: { tool: Tool }) {
               )}
             </div>
             {optionsPanel}
+          </div>
+        ) : tool.slug === "edit-pdf" ? (
+          <div className="mt-10">
+            {hasFiles ? (
+              <>
+                <FileStrip files={files} onFilesChange={setFiles} accept={tool.accept} size="compact" />
+                <EditPdfWorkspace file={activeFile!} />
+              </>
+            ) : (
+              <div className="mt-12">
+                <Dropzone files={files} onFiles={addFiles} accept={tool.accept} />
+                {pdfTool && (
+                  <button
+                    type="button"
+                    onClick={loadSample}
+                    className="mt-4 inline-flex items-center gap-2 text-[14px] text-muted transition hover:text-ink"
+                  >
+                    <FilePdf size={16} className="text-accent" weight="regular" />
+                    Need a file to try? Load the sample PDF.
+                  </button>
+                )}
+              </div>
+            )}
           </div>
         ) : !hasFiles ? (
           <div className="mt-12">

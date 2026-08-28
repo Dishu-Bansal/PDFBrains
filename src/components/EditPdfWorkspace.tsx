@@ -494,6 +494,7 @@ function EditPageCard({
   const fallbackScale = PAGE_WIDTH / pageWidth;
   const [items, setItems] = useState<OverlayItem[]>([]);
   const [dims, setDims] = useState<{ w: number; h: number } | null>(null);
+  const editableCount = items.filter((it) => it.text.trim() !== "").length;
 
   // Render the page, read its text content, then blank the original runs and
   // overlay editable spans at the exact positions pdf.js computes for them.
@@ -574,18 +575,19 @@ function EditPageCard({
         if (cancelled) return;
 
         // Blank out each original run with the background it sits on. The
-        // sample point is taken above the run, away from the glyphs, and
-        // dark pixels are skipped so a glyph is never used as the fill.
+        // fill is sampled from a strip above the run (never from a glyph),
+        // and whitespace-only runs are left alone so they cannot paint over
+        // graphics or colors sitting between words.
         for (const it of built) {
-          if (it.width <= 0) continue;
+          if (it.width <= 0 || !it.text.trim()) continue;
           ctx.save();
           if (it.angle !== 0) {
             ctx.translate(it.left, it.top);
             ctx.rotate((it.angle * Math.PI) / 180);
-            ctx.fillStyle = sampleFill(ctx, it.left + it.width / 2, it.top, dpr, canvas.width, canvas.height);
+            ctx.fillStyle = sampleFill(ctx, it.left, it.top, it.width, dpr, canvas.width, canvas.height);
             ctx.fillRect(-1, -1, it.width + 2, it.fontHeight + 2);
           } else {
-            ctx.fillStyle = sampleFill(ctx, it.left + it.width / 2, it.top, dpr, canvas.width, canvas.height);
+            ctx.fillStyle = sampleFill(ctx, it.left, it.top, it.width, dpr, canvas.width, canvas.height);
             ctx.fillRect(it.left - 1, it.top - 1, it.width + 2, it.fontHeight + 2);
           }
           ctx.restore();
@@ -626,9 +628,9 @@ function EditPageCard({
           {pageNumber}
         </span>
         {dims ? (
-          items.length > 0 ? (
+          editableCount > 0 ? (
             <p className="text-[12px] text-muted">
-              {items.length} text block{items.length === 1 ? "" : "s"} · click to edit
+              {editableCount} text block{editableCount === 1 ? "" : "s"} · click to edit
             </p>
           ) : (
             <p className="text-[12px] text-muted">No editable text found on this page</p>
@@ -648,58 +650,90 @@ function EditPageCard({
         }}
       >
         <div ref={boxRef} className="absolute inset-0" />
-        {items.map((it, index) => (
-          <span
-            key={index}
-            contentEditable
-            suppressContentEditableWarning
-            ref={(node) => {
-              if (node && node.textContent !== it.text) node.textContent = it.text;
-            }}
-            onInput={(event) => {
-              const text = event.currentTarget.textContent ?? "";
-              setItems((prev) => prev.map((p, pi) => (pi === index ? { ...p, text } : p)));
-              onUpdate(pageIndex, index, text);
-            }}
-            className="absolute cursor-text whitespace-pre rounded text-ink outline-none transition-colors hover:bg-accent/10 focus:bg-accent/15 focus:ring-1 focus:ring-accent"
-            style={{
-              left: it.left,
-              top: it.top,
-              fontSize: it.fontHeight,
-              lineHeight: 1,
-              fontFamily: cssFontFamily(it.fontFamily),
-              fontWeight: it.bold ? 700 : 400,
-              fontStyle: it.italic ? "italic" : "normal",
-              minWidth: Math.max(1, it.width),
-              transform: it.angle !== 0 ? `rotate(${it.angle}deg)` : undefined,
-              transformOrigin: "0 0",
-            }}
-          />
-        ))}
+        {items.map((it, index) => {
+          // Whitespace-only runs (inter-word spaces) stay in the download
+          // JSON for spacing, but get no editable box and no hover state so
+          // they cannot disrupt the line or the graphics behind them.
+          if (!it.text.trim()) return null;
+          return (
+            <span
+              key={index}
+              contentEditable
+              suppressContentEditableWarning
+              ref={(node) => {
+                if (node && node.textContent !== it.text) node.textContent = it.text;
+              }}
+              onInput={(event) => {
+                const text = event.currentTarget.textContent ?? "";
+                setItems((prev) => prev.map((p, pi) => (pi === index ? { ...p, text } : p)));
+                onUpdate(pageIndex, index, text);
+              }}
+              className="absolute cursor-text whitespace-pre rounded text-ink outline-none transition-colors hover:bg-accent/10 focus:bg-accent/15 focus:ring-1 focus:ring-accent"
+              style={{
+                left: it.left,
+                top: it.top,
+                fontSize: it.fontHeight,
+                lineHeight: 1,
+                fontFamily: cssFontFamily(it.fontFamily),
+                fontWeight: it.bold ? 700 : 400,
+                fontStyle: it.italic ? "italic" : "normal",
+                transform: it.angle !== 0 ? `rotate(${it.angle}deg)` : undefined,
+                transformOrigin: "0 0",
+              }}
+            />
+          );
+        })}
       </div>
     </div>
   );
 }
 
 /**
- * Samples the canvas above a text run until it finds a non-dark pixel,
- * returning it as the fill color for blanking. Falls back to white.
+ * Samples a strip just above a text run and averages the non-dark pixels
+ * into the fill color used for blanking, so the original background (paper,
+ * colored block, graphic) is restored instead of a single sampled pixel.
+ * Falls back to white.
  */
 function sampleFill(
   ctx: CanvasRenderingContext2D,
-  centerXPx: number,
+  leftPx: number,
   boxTopPx: number,
+  widthPx: number,
   dpr: number,
   canvasWidth: number,
   canvasHeight: number
 ): string {
-  for (let dy = 2; dy <= 18; dy += 4) {
-    const sx = Math.min(Math.floor(centerXPx * dpr), canvasWidth - 1);
-    const sy = Math.min(Math.max(Math.floor((boxTopPx - dy) * dpr), 0), canvasHeight - 1);
-    const px = ctx.getImageData(sx, sy, 1, 1).data;
-    if (px[3] > 10) {
-      const luminance = 0.299 * px[0] + 0.587 * px[1] + 0.114 * px[2];
-      if (luminance > 80) return `rgba(${px[0]}, ${px[1]}, ${px[2]}, ${px[3] / 255})`;
+  for (let dy = 1; dy <= 16; dy += 3) {
+    const y = Math.floor((boxTopPx - dy) * dpr);
+    if (y < 0 || y >= canvasHeight) continue;
+    const x0 = Math.max(0, Math.floor(leftPx * dpr));
+    const x1 = Math.min(canvasWidth - 1, Math.floor((leftPx + widthPx) * dpr));
+    if (x1 < x0) continue;
+    let data: Uint8ClampedArray;
+    try {
+      data = ctx.getImageData(x0, y, x1 - x0 + 1, 1).data;
+    } catch {
+      continue;
+    }
+    let r = 0;
+    let g = 0;
+    let b = 0;
+    let a = 0;
+    let n = 0;
+    for (let i = 0; i < data.length; i += 4) {
+      const alpha = data[i + 3];
+      if (alpha <= 10) continue;
+      const luminance = 0.299 * data[i] + 0.587 * data[i + 1] + 0.114 * data[i + 2];
+      if (luminance <= 80) continue;
+      r += data[i];
+      g += data[i + 1];
+      b += data[i + 2];
+      a += alpha;
+      n++;
+    }
+    if (n >= 2) {
+      const alpha = Math.round(a / n);
+      return `rgba(${Math.round(r / n)}, ${Math.round(g / n)}, ${Math.round(b / n)}, ${alpha / 255})`;
     }
   }
   return "rgba(255,255,255,1)";

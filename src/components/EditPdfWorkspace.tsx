@@ -1,6 +1,6 @@
 import { CheckCircle, DownloadSimple, SpinnerGap } from "@phosphor-icons/react";
 import type { PDFDocumentProxy } from "pdfjs-dist";
-import { useEffect, useRef, useState } from "react";
+import { useEffect, useMemo, useRef, useState } from "react";
 
 import { usePdfDocument } from "../lib/pdf";
 import {
@@ -25,6 +25,11 @@ interface TextGeometry {
   y: number;
   w: number;
   h: number;
+}
+
+interface FontStyle {
+  bold: boolean;
+  italic: boolean;
 }
 
 /**
@@ -163,6 +168,22 @@ export function EditPdfWorkspace({ file }: EditPdfWorkspaceProps) {
   const pages: TextEditorPage[] = document?.pages ?? [];
   const changedCount = countChanges(document, originalRef.current);
 
+  // Map font ids to their visual style so bold/italic runs render as such.
+  const fontMap = useMemo(() => {
+    const map: Record<string, FontStyle> = {};
+    for (const font of (document?.fonts ?? []) as Array<{
+      id?: string;
+      baseName?: string;
+    }>) {
+      if (!font.id) continue;
+      map[font.id] = {
+        bold: /bold/i.test(font.baseName ?? ""),
+        italic: /italic|oblique/i.test(font.baseName ?? ""),
+      };
+    }
+    return map;
+  }, [document]);
+
   return (
     <div className="mt-8">
       <div className="flex flex-wrap items-center justify-between gap-4">
@@ -209,6 +230,7 @@ export function EditPdfWorkspace({ file }: EditPdfWorkspaceProps) {
               pageNumber={pageIndex + 1}
               page={page}
               pageIndex={pageIndex}
+              fontMap={fontMap}
               onUpdate={updateElement}
             />
           ))}
@@ -252,12 +274,14 @@ function EditPageCard({
   pageNumber,
   page,
   pageIndex,
+  fontMap,
   onUpdate,
 }: {
   doc: PDFDocumentProxy;
   pageNumber: number;
   page: TextEditorPage;
   pageIndex: number;
+  fontMap: Record<string, FontStyle>;
   onUpdate: (pageIndex: number, elementIndex: number, text: string) => void;
 }) {
   const boxRef = useRef<HTMLDivElement>(null);
@@ -267,18 +291,20 @@ function EditPageCard({
   const elements: TextEditorTextElement[] = page.textElements ?? [];
 
   // Snapshot the original geometry once; text edits do not move the boxes.
-  // Only elements that carry a text matrix can be positioned.
+  // The box height approximates the visible glyph extent (cap height) so the
+  // blanked area and overlays land where the text actually is.
   const geometryRef = useRef<TextGeometry[]>([]);
   if (geometryRef.current.length === 0 && elements.length > 0) {
     geometryRef.current = elements
       .filter((el) => el.textMatrix && el.textMatrix.length >= 6)
       .map((el) => {
         const matrix = el.textMatrix as number[];
+        const fontSize = el.fontSize ?? el.fontMatrixSize ?? 12;
         return {
           x: matrix[4],
           y: matrix[5],
           w: el.width ?? 0,
-          h: el.height ?? (el.fontSize ?? 12),
+          h: fontSize * 0.8,
         };
       });
   }
@@ -369,10 +395,11 @@ function EditPageCard({
           const x = matrix[4];
           const y = matrix[5];
           const fontSizePt = el.fontSize ?? el.fontMatrixSize ?? 12;
-          const boxHeightPt = el.height ?? fontSizePt * 0.8;
+          const boxHeightPt = fontSizePt * 0.8;
           const left = x * scale;
           const top = (pageHeight - y - boxHeightPt) * scale;
           const fontSize = Math.max(6, fontSizePt * scale);
+          const style = fontMap[el.fontId ?? ""];
 
           return (
             <span
@@ -394,6 +421,8 @@ function EditPageCard({
                 minHeight: boxHeightPt * scale,
                 maxWidth: PAGE_WIDTH - left,
                 fontFamily: "Outfit Variable, sans-serif",
+                fontWeight: style?.bold ? 700 : 400,
+                fontStyle: style?.italic ? "italic" : "normal",
               }}
             />
           );

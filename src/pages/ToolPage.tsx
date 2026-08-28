@@ -4,7 +4,7 @@ import { Link, Navigate, useParams } from "react-router-dom";
 
 import { CameraScanner } from "../components/CameraScanner";
 import { Dropzone } from "../components/Dropzone";
-import { EditPdfWorkspace } from "../components/EditPdfWorkspace";
+import { EditorWorkspace } from "../components/editor/EditorWorkspace";
 import { FileStrip } from "../components/FileStrip";
 import { Footer } from "../components/Footer";
 import { Nav } from "../components/Nav";
@@ -1839,7 +1839,12 @@ function ToolWorkspace({ tool }: { tool: Tool }) {
             {hasFiles ? (
               <>
                 <FileStrip files={files} onFilesChange={setFiles} accept={tool.accept} size="compact" />
-                <EditPdfWorkspace file={activeFile!} />
+                <div className="mt-4 h-[calc(100dvh-360px)] min-h-[540px]">
+                  <EditorWorkspace
+                    key={`${activeFile?.name}-${activeFile?.size}-${activeFile?.lastModified}`}
+                    file={activeFile!}
+                  />
+                </div>
               </>
             ) : (
               <div className="mt-12">

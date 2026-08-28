@@ -131,6 +131,23 @@ export function EditPdfWorkspace({ file }: EditPdfWorkspaceProps) {
     }
   };
 
+  // Map font ids to their visual style so bold/italic runs render as such.
+  // (Hook kept above the early returns so the hook order never changes.)
+  const fontMap = useMemo(() => {
+    const map: Record<string, FontStyle> = {};
+    for (const font of (document?.fonts ?? []) as Array<{
+      id?: string;
+      baseName?: string;
+    }>) {
+      if (!font.id) continue;
+      map[font.id] = {
+        bold: /bold/i.test(font.baseName ?? ""),
+        italic: /italic|oblique/i.test(font.baseName ?? ""),
+      };
+    }
+    return map;
+  }, [document]);
+
   if (pdfError) {
     return (
       <div className="mt-8 rounded-2xl border border-line bg-surface p-6">
@@ -167,22 +184,6 @@ export function EditPdfWorkspace({ file }: EditPdfWorkspaceProps) {
 
   const pages: TextEditorPage[] = document?.pages ?? [];
   const changedCount = countChanges(document, originalRef.current);
-
-  // Map font ids to their visual style so bold/italic runs render as such.
-  const fontMap = useMemo(() => {
-    const map: Record<string, FontStyle> = {};
-    for (const font of (document?.fonts ?? []) as Array<{
-      id?: string;
-      baseName?: string;
-    }>) {
-      if (!font.id) continue;
-      map[font.id] = {
-        bold: /bold/i.test(font.baseName ?? ""),
-        italic: /italic|oblique/i.test(font.baseName ?? ""),
-      };
-    }
-    return map;
-  }, [document]);
 
   return (
     <div className="mt-8">

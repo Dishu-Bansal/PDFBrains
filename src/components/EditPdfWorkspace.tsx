@@ -3,8 +3,14 @@ import type { PDFDocumentProxy } from "pdfjs-dist";
 import { useEffect, useRef, useState } from "react";
 
 import { usePdfDocument } from "../lib/pdf";
-import { extractTextEditorJson, renderTextEditorPdf } from "../lib/api";
-import type { TextEditorDocument, TextEditorPage } from "../lib/api";
+import {
+  applyTextEdits,
+  cacheTextEditorPdf,
+  clearTextEditorCache,
+  extractTextEditorJson,
+  renderTextEditorPdf,
+} from "../lib/api";
+import type { TextEditorDocument, TextEditorPage, TextEditorTextElement } from "../lib/api";
 import { baseName, downloadBlob } from "../lib/process";
 
 /** Fixed render width of each page, in CSS pixels. */
@@ -14,73 +20,35 @@ interface EditPdfWorkspaceProps {
   file: File;
 }
 
-/** Renders one PDF page to a canvas at a fixed width. */
-function PageCanvas({
-  doc,
-  pageNumber,
-  width,
-}: {
-  doc: PDFDocumentProxy;
-  pageNumber: number;
-  width: number;
-}) {
-  const boxRef = useRef<HTMLDivElement>(null);
-
-  useEffect(() => {
-    let cancelled = false;
-    let task: { cancel: () => void; promise: Promise<unknown> } | null = null;
-
-    (async () => {
-      try {
-        const page = await doc.getPage(pageNumber);
-        if (cancelled) return;
-        const vp1 = page.getViewport({ scale: 1 });
-        const scale = width / vp1.width;
-        const sized = page.getViewport({ scale });
-        const canvas = document.createElement("canvas");
-        const dpr = Math.min(window.devicePixelRatio || 1, 2);
-        canvas.width = Math.floor(sized.width * dpr);
-        canvas.height = Math.floor(sized.height * dpr);
-        canvas.style.width = `${sized.width}px`;
-        canvas.style.height = `${sized.height}px`;
-        const ctx = canvas.getContext("2d");
-        if (!ctx) return;
-        ctx.setTransform(dpr, 0, 0, dpr, 0, 0);
-        task = page.render({ canvasContext: ctx, viewport: sized });
-        await task.promise;
-        if (!cancelled) boxRef.current?.replaceChildren(canvas);
-      } catch {
-        /* render failed, leave placeholder */
-      }
-    })();
-
-    return () => {
-      cancelled = true;
-      task?.cancel();
-      boxRef.current?.replaceChildren();
-    };
-  }, [doc, pageNumber, width]);
-
-  return <div ref={boxRef} className="w-full" />;
+interface TextGeometry {
+  x: number;
+  y: number;
+  w: number;
+  h: number;
 }
 
 /**
  * Edit PDF workspace: every page rendered vertically with its extracted
- * text overlaid as click-to-edit spans. Edits update the extracted JSON
- * document; "Download" applies them via the job id and clears the cache.
+ * text overlaid as click-to-edit spans. The original canvas text is blanked
+ * out (using the page's background color) so the editable text replaces it
+ * instead of duplicating it. Edits update the extracted JSON document;
+ * "Download" applies them through the job id and clears the server cache.
  */
 export function EditPdfWorkspace({ file }: EditPdfWorkspaceProps) {
   const { doc, pageCount, loading, error: pdfError } = usePdfDocument(file);
   const [document, setDocument] = useState<TextEditorDocument | null>(null);
+  const [jobId, setJobId] = useState<string | null>(null);
   const [loadError, setLoadError] = useState<string | null>(null);
   const [busy, setBusy] = useState(false);
   const [applied, setApplied] = useState<string | null>(null);
+  const jobRef = useRef<string | null>(null);
   const originalRef = useRef<TextEditorDocument | null>(null);
 
-  // Extract the editable JSON on file change.
+  // Extract the editable JSON and cache the PDF for the job on file change.
   useEffect(() => {
     let cancelled = false;
     setDocument(null);
+    setJobId(null);
     setLoadError(null);
     setApplied(null);
     originalRef.current = null;
@@ -88,9 +56,20 @@ export function EditPdfWorkspace({ file }: EditPdfWorkspaceProps) {
     (async () => {
       try {
         const json = await extractTextEditorJson(file);
-        if (cancelled) return;
+        let cachedJob: string | null = null;
+        try {
+          cachedJob = await cacheTextEditorPdf(file);
+        } catch {
+          cachedJob = null; // fall back to the job-less render
+        }
+        if (cancelled) {
+          if (cachedJob) clearTextEditorCache(cachedJob).catch(() => {});
+          return;
+        }
+        jobRef.current = cachedJob;
         originalRef.current = json;
         setDocument(json);
+        setJobId(cachedJob);
       } catch (err) {
         if (!cancelled) {
           setLoadError(
@@ -102,6 +81,10 @@ export function EditPdfWorkspace({ file }: EditPdfWorkspaceProps) {
 
     return () => {
       cancelled = true;
+      if (jobRef.current) {
+        clearTextEditorCache(jobRef.current).catch(() => {});
+        jobRef.current = null;
+      }
     };
   }, [file]);
 
@@ -126,13 +109,18 @@ export function EditPdfWorkspace({ file }: EditPdfWorkspaceProps) {
     setBusy(true);
     setApplied(null);
     try {
-      const blob = await renderTextEditorPdf(document, file.name);
+      const blob = jobId
+        ? await applyTextEdits(jobId, document, file.name)
+        : await renderTextEditorPdf(document, file.name);
       downloadBlob(blob, `${baseName(file)}-edited.pdf`);
+      if (jobId) {
+        await clearTextEditorCache(jobId).catch(() => {});
+        jobRef.current = null;
+        setJobId(null);
+      }
       setApplied("Edited PDF downloaded.");
     } catch (err) {
-      setApplied(
-        err instanceof Error ? err.message : "Could not apply the edits."
-      );
+      setApplied(err instanceof Error ? err.message : "Could not apply the edits.");
     } finally {
       setBusy(false);
     }
@@ -153,7 +141,10 @@ export function EditPdfWorkspace({ file }: EditPdfWorkspaceProps) {
         <p className="text-[14px] text-muted">Reading pages...</p>
         <div className="mt-4 space-y-4">
           {Array.from({ length: 3 }, (_, i) => (
-            <div key={i} className="aspect-[3/4] w-[640px] max-w-full animate-pulse rounded-lg bg-raised" />
+            <div
+              key={i}
+              className="aspect-[3/4] w-[640px] max-w-full animate-pulse rounded-lg bg-raised"
+            />
           ))}
         </div>
       </div>
@@ -255,7 +246,7 @@ function countChanges(
   return count;
 }
 
-/** One page: the rendered canvas with editable text overlays. */
+/** One page: the rendered canvas (text blanked) with editable overlays. */
 function EditPageCard({
   doc,
   pageNumber,
@@ -269,10 +260,88 @@ function EditPageCard({
   pageIndex: number;
   onUpdate: (pageIndex: number, elementIndex: number, text: string) => void;
 }) {
+  const boxRef = useRef<HTMLDivElement>(null);
   const pageWidth = page.width ?? 595.28;
   const pageHeight = page.height ?? 841.89;
   const scale = PAGE_WIDTH / pageWidth;
-  const elements = page.textElements ?? [];
+  const elements: TextEditorTextElement[] = page.textElements ?? [];
+
+  // Snapshot the original geometry once; text edits do not move the boxes.
+  const geometryRef = useRef<TextGeometry[]>([]);
+  if (geometryRef.current.length === 0 && elements.length > 0) {
+    geometryRef.current = elements.map((el) => {
+      const matrix = el.textMatrix ?? [1, 0, 0, 1, 0, 0];
+      return {
+        x: matrix[4] ?? 0,
+        y: matrix[5] ?? 0,
+        w: el.width ?? 0,
+        h: el.height ?? (el.fontSize ?? 12),
+      };
+    });
+  }
+
+  // Render the page once, then blank out the original text areas using the
+  // page's background color so the editable overlays replace the text.
+  useEffect(() => {
+    let cancelled = false;
+    let task: { cancel: () => void; promise: Promise<unknown> } | null = null;
+
+    (async () => {
+      try {
+        const pdfPage = await doc.getPage(pageNumber);
+        if (cancelled) return;
+        const vp1 = pdfPage.getViewport({ scale: 1 });
+        const scale2 = PAGE_WIDTH / vp1.width;
+        const viewport = pdfPage.getViewport({ scale: scale2 });
+        const canvas = document.createElement("canvas");
+        const dpr = Math.min(window.devicePixelRatio || 1, 2);
+        canvas.width = Math.floor(viewport.width * dpr);
+        canvas.height = Math.floor(viewport.height * dpr);
+        canvas.style.width = `${viewport.width}px`;
+        canvas.style.height = `${viewport.height}px`;
+        const ctx = canvas.getContext("2d");
+        if (!ctx) return;
+        ctx.setTransform(dpr, 0, 0, dpr, 0, 0);
+        task = pdfPage.render({ canvasContext: ctx, viewport });
+        await task.promise;
+        if (cancelled) return;
+
+        // Blank out each original text run with the background it sits on.
+        for (const geo of geometryRef.current) {
+          if (geo.w <= 0 || geo.h <= 0) continue;
+          let fill = "#ffffff";
+          try {
+            const sx = Math.min(Math.floor(geo.x * scale2 * dpr) + 1, canvas.width - 1);
+            const sy = Math.min(
+              Math.max(Math.floor((pageHeight - geo.y) * scale2 * dpr) - 1, 0),
+              canvas.height - 1
+            );
+            const px = ctx.getImageData(sx, sy, 1, 1).data;
+            fill = `rgba(${px[0]}, ${px[1]}, ${px[2]}, ${px[3] / 255})`;
+          } catch {
+            /* keep white fallback */
+          }
+          ctx.fillStyle = fill;
+          ctx.fillRect(
+            geo.x * scale2,
+            (pageHeight - geo.y - geo.h) * scale2,
+            geo.w * scale2,
+            geo.h * scale2 + 1
+          );
+        }
+
+        if (!cancelled) boxRef.current?.replaceChildren(canvas);
+      } catch {
+        /* render failed, leave placeholder */
+      }
+    })();
+
+    return () => {
+      cancelled = true;
+      task?.cancel();
+      boxRef.current?.replaceChildren();
+    };
+  }, [doc, pageNumber, pageWidth, pageHeight]);
 
   return (
     <div>
@@ -288,9 +357,7 @@ function EditPageCard({
         className="relative overflow-hidden rounded-lg border border-line bg-raised"
         style={{ width: PAGE_WIDTH, height: pageHeight * scale, maxWidth: "100%" }}
       >
-        <div className="absolute inset-0">
-          <PageCanvas doc={doc} pageNumber={pageNumber} width={PAGE_WIDTH} />
-        </div>
+        <div ref={boxRef} className="absolute inset-0" />
         {elements.map((el, elementIndex) => {
           const matrix = el.textMatrix ?? [1, 0, 0, 1, 0, 0];
           const x = matrix[4] ?? 0;

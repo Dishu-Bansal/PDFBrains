@@ -1,0 +1,104 @@
+@import "tailwindcss";
+
+/*
+ * PDFBrains design tokens.
+ * One theme, two modes. Light is the default "sheet of paper"; dark is
+ * "ink on glass". The accent is a rubber-stamp vermilion used sparingly:
+ * icon chips, active states, the logo fold. Everything else stays paper
+ * and ink so the accent keeps its job.
+ */
+:root {
+  color-scheme: light;
+
+  --paper: #f4f5f6;
+  --surface: #fdfdfe;
+  --surface-raised: #fbfcfd;
+  --ink: #161a21;
+  --muted: #5b6572;
+  --line: #e3e6ea;
+  --line-strong: #cbd2d9;
+
+  --accent: #e04f22;
+  --accent-strong: #b93a12;
+  --accent-soft: rgba(224, 79, 34, 0.09);
+  --accent-ring: rgba(224, 79, 34, 0.45);
+  --danger: #b3371d;
+}
+
+html[data-theme="dark"] {
+  color-scheme: dark;
+
+  --paper: #121519;
+  --surface: #1a1e24;
+  --surface-raised: #20252c;
+  --ink: #e9ecef;
+  --muted: #9aa4b0;
+  --line: #262c34;
+  --line-strong: #3a434e;
+
+  --accent: #ff6a38;
+  --accent-strong: #ff8a5e;
+  --accent-soft: rgba(255, 106, 56, 0.13);
+  --accent-ring: rgba(255, 106, 56, 0.55);
+  --danger: #ff8a7a;
+}
+
+@theme inline {
+  --color-paper: var(--paper);
+  --color-surface: var(--surface);
+  --color-raised: var(--surface-raised);
+  --color-ink: var(--ink);
+  --color-muted: var(--muted);
+  --color-line: var(--line);
+  --color-linestrong: var(--line-strong);
+  --color-accent: var(--accent);
+  --color-accentstrong: var(--accent-strong);
+  --color-accentsoft: var(--accent-soft);
+  --color-danger: var(--danger);
+
+  --font-sans: "Outfit Variable", ui-sans-serif, system-ui, -apple-system, "Segoe UI", sans-serif;
+  --font-mono: "JetBrains Mono Variable", ui-monospace, "SF Mono", "Cascadia Mono", monospace;
+}
+
+@layer base {
+  html {
+    scroll-behavior: smooth;
+  }
+
+  body {
+    @apply bg-paper text-ink antialiased;
+    font-feature-settings: "ss01", "cv02";
+  }
+
+  ::selection {
+    background: var(--accent-soft);
+    color: var(--ink);
+  }
+
+  :focus-visible {
+    outline: 2px solid var(--accent-strong);
+    outline-offset: 2px;
+    border-radius: 4px;
+  }
+
+  /* Shape lock: cards and panels are 16-24px, inputs are 12px,
+     interactive controls (buttons, pills) are full-pill. */
+  input,
+  textarea,
+  select {
+    border-radius: 12px;
+  }
+
+  @media (prefers-reduced-motion: reduce) {
+    html {
+      scroll-behavior: auto;
+    }
+    *,
+    *::before,
+    *::after {
+      animation-duration: 0.01ms !important;
+      animation-iteration-count: 1 !important;
+      transition-duration: 0.01ms !important;
+    }
+  }
+}

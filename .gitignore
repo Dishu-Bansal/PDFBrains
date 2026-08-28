@@ -1,0 +1,28 @@
+# Dependencies
+node_modules/
+
+# Build output
+dist/
+dist-ssr/
+
+# Local npm cache (used by installs in this workspace)
+.npm-cache/
+
+# Environment - never commit secrets
+.env
+.env.local
+.env.*.local
+# (.env.example is the committed template)
+
+# Logs
+*.log
+npm-debug.log*
+
+# Editor / OS
+.vscode/
+.idea/
+.DS_Store
+Thumbs.db
+
+# Misc
+*.tsbuildinfo

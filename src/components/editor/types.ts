@@ -72,6 +72,10 @@ export interface OutlineEntry {
 /** Widest a page surface can render at, in CSS pixels. */
 export const MAX_PAGE_WIDTH = 640;
 
+export const MIN_ZOOM = 0.5;
+export const MAX_ZOOM = 2;
+export const ZOOM_STEP = 0.1;
+
 /** The rendering scale used to turn annotation pixels into PDF points. */
 export const SURFACE_SCALE_BASE = MAX_PAGE_WIDTH;
 

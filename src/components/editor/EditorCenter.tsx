@@ -33,6 +33,7 @@ interface EditorCenterProps {
   pageCount: number;
   baseWidth: number;
   renderWidth: number;
+  zoom: number;
   mode: EditorMode;
   containerRef: RefObject<HTMLDivElement>;
   pageEls: MutableRefObject<(HTMLDivElement | null)[]>;
@@ -50,6 +51,7 @@ interface EditorCenterProps {
   onRemove: (id: string) => void;
   onSelect: (id: string | null) => void;
   onActivePageChange: (pageIndex: number) => void;
+  onZoomChange: (zoom: number) => void;
   onTextReady: (pageIndex: number, elements: TextEditorTextElement[]) => void;
   onTextEdit: (pageIndex: number, itemIndex: number, text: string) => void;
 }
@@ -65,6 +67,7 @@ export function EditorCenter({
   pageCount,
   baseWidth,
   renderWidth,
+  zoom,
   mode,
   containerRef,
   pageEls,
@@ -82,9 +85,13 @@ export function EditorCenter({
   onRemove,
   onSelect,
   onActivePageChange,
+  onZoomChange,
   onTextReady,
   onTextEdit,
 }: EditorCenterProps) {
+  const [panning, setPanning] = useState(false);
+  const panRef = useRef<{ pointerId: number; lastX: number; lastY: number } | null>(null);
+
   const handleScroll = () => {
     const container = containerRef.current;
     if (!container) return;
@@ -98,6 +105,59 @@ export function EditorCenter({
     onActivePageChange(current);
   };
 
+  // Panning: middle mouse always, space + drag always, left drag in the
+  // select tool or Edit Text mode (empty areas). Scrolls the container.
+  const handlePanPointerDown = (event: React.PointerEvent<HTMLDivElement>) => {
+    const container = containerRef.current;
+    if (!container) return;
+    // Skip scrollbar drags.
+    const rect = container.getBoundingClientRect();
+    if (event.clientX - rect.left >= container.clientWidth || event.clientY - rect.top >= container.clientHeight) {
+      return;
+    }
+    const spaceHeld = (event.getModifierState as (key: string) => boolean)("Space");
+    const panEnabled =
+      event.button === 1 ||
+      spaceHeld ||
+      (mode === "annotation" && activeTool === "select") ||
+      mode === "text";
+    if (!panEnabled) return;
+    event.preventDefault();
+    event.currentTarget.setPointerCapture(event.pointerId);
+    panRef.current = { pointerId: event.pointerId, lastX: event.clientX, lastY: event.clientY };
+    setPanning(true);
+  };
+
+  const handlePanPointerMove = (event: React.PointerEvent<HTMLDivElement>) => {
+    const pan = panRef.current;
+    const container = containerRef.current;
+    if (!pan || !container) return;
+    const dx = event.clientX - pan.lastX;
+    const dy = event.clientY - pan.lastY;
+    pan.lastX = event.clientX;
+    pan.lastY = event.clientY;
+    container.scrollLeft -= dx;
+    container.scrollTop -= dy;
+  };
+
+  const handlePanPointerUp = () => {
+    panRef.current = null;
+    setPanning(false);
+  };
+
+  // Ctrl/Cmd + wheel zooms around the container centre.
+  useEffect(() => {
+    const el = containerRef.current;
+    if (!el) return;
+    const onWheel = (event: WheelEvent) => {
+      if (!event.ctrlKey && !event.metaKey) return;
+      event.preventDefault();
+      onZoomChange(zoom * (event.deltaY < 0 ? 1.1 : 1 / 1.1));
+    };
+    el.addEventListener("wheel", onWheel, { passive: false });
+    return () => el.removeEventListener("wheel", onWheel);
+  }, [containerRef, onZoomChange, zoom]);
+
   const fonts = useMemo(() => (textDoc?.fonts ?? EMPTY_FONTS) as StirlingFont[], [textDoc]);
   const allElements = useMemo(
     () =>
@@ -107,13 +167,22 @@ export function EditorCenter({
     [textDoc, pageCount]
   );
 
+  const panEligible = mode === "text" || (mode === "annotation" && activeTool === "select");
+
   return (
     <div
       ref={containerRef}
       onScroll={handleScroll}
-      className="min-w-0 flex-1 overflow-auto bg-raised/50"
+      onPointerDown={handlePanPointerDown}
+      onPointerMove={handlePanPointerMove}
+      onPointerUp={handlePanPointerUp}
+      onPointerCancel={handlePanPointerUp}
+      className={[
+        "min-w-0 flex-1 overflow-auto bg-raised/50",
+        panning ? "cursor-grabbing" : panEligible ? "cursor-grab" : "",
+      ].join(" ")}
     >
-      <div className="mx-auto w-full max-w-[720px] space-y-8 px-6 py-6">
+      <div className="mx-auto w-full space-y-8 px-6 py-6">
         {Array.from({ length: pageCount }, (_, pageIndex) => (
           <div
             key={pageIndex}
@@ -353,6 +422,8 @@ function EditorPageSurface({
 
   // ---- hot layer: create new annotations for the active tool ----
   const handleHotPointerDown = (event: React.PointerEvent<HTMLDivElement>) => {
+    // Only primary-button clicks; space+drag is reserved for panning.
+    if (event.button !== 0 || (event.getModifierState as (key: string) => boolean)("Space")) return;
     const { x, y } = pointFromEvent(event);
     if (activeTool === "textbox") {
       const id = onAdd({
@@ -495,7 +566,6 @@ function EditorPageSurface({
         style={{
           width: dims?.w ?? renderWidth,
           height: dims?.h ?? renderWidth * 1.4,
-          maxWidth: "100%",
         }}
       >
         <div ref={boxRef} className="absolute inset-0" />
@@ -544,7 +614,7 @@ function EditorPageSurface({
                     onUpdate(annotation.id, { text: event.currentTarget.textContent ?? "" })
                   }
                   className={[
-                    "h-full w-full cursor-text overflow-hidden whitespace-pre-wrap break-words outline-none",
+                    "h-full w-full cursor-text overflow-hidden whitespace-pre-wrap break-words outline-none pointer-events-auto",
                     isSelected ? "ring-1 ring-accent ring-inset" : "",
                   ].join(" ")}
                   style={{
@@ -560,7 +630,7 @@ function EditorPageSurface({
                 {isSelected && (
                   <>
                     <div
-                      className="absolute -left-1 -top-1 size-3 cursor-move rounded-[3px] bg-accent shadow ring-1 ring-paper"
+                      className="pointer-events-auto absolute -left-1 -top-1 size-3 cursor-move rounded-[3px] bg-accent shadow ring-1 ring-paper"
                       aria-hidden="true"
                       onPointerDown={(event) => startDrag(event, annotation, "move")}
                       onPointerMove={moveDrag}
@@ -568,7 +638,7 @@ function EditorPageSurface({
                       onPointerCancel={endDrag}
                     />
                     <div
-                      className="absolute -bottom-1 -right-1 size-3 cursor-nwse-resize rounded-[3px] bg-accent shadow ring-1 ring-paper"
+                      className="pointer-events-auto absolute -bottom-1 -right-1 size-3 cursor-nwse-resize rounded-[3px] bg-accent shadow ring-1 ring-paper"
                       aria-hidden="true"
                       onPointerDown={(event) => startDrag(event, annotation, "resize")}
                       onPointerMove={moveDrag}
@@ -578,8 +648,9 @@ function EditorPageSurface({
                     <button
                       type="button"
                       onClick={() => onRemove(annotation.id)}
+                      onPointerDown={(event) => event.stopPropagation()}
                       aria-label="Delete text box"
-                      className="absolute -right-2 -top-2.5 flex size-5 items-center justify-center rounded-full bg-ink text-paper shadow transition hover:bg-accent"
+                      className="pointer-events-auto absolute -right-2 -top-2.5 flex size-5 items-center justify-center rounded-full bg-ink text-paper shadow transition hover:bg-accent"
                     >
                       <TrashSimple size={11} weight="bold" />
                     </button>
@@ -714,8 +785,9 @@ function EditorPageSurface({
             <button
               type="button"
               onClick={() => onRemove(selectedShape.id)}
+              onPointerDown={(event) => event.stopPropagation()}
               aria-label="Delete shape"
-              className="absolute flex size-5 items-center justify-center rounded-full bg-ink text-paper shadow transition hover:bg-accent"
+              className="pointer-events-auto absolute flex size-5 items-center justify-center rounded-full bg-ink text-paper shadow transition hover:bg-accent"
               style={{
                 left: (selectedShape.x + selectedShape.w) * displayScale - 6,
                 top: selectedShape.y * displayScale - 10,
@@ -747,6 +819,7 @@ function EditorPageSurface({
                     top: item.top,
                     fontSize: item.fontHeight,
                     lineHeight: 1,
+                    pointerEvents: "auto",
                     fontFamily: cssFontFamily(item.fontFamily),
                     fontWeight: item.bold ? 700 : 400,
                     fontStyle: item.italic ? "italic" : "normal",

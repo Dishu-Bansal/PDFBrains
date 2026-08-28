@@ -25,7 +25,7 @@ import type {
   EditorToolId,
   OutlineEntry,
 } from "./types";
-import { DEFAULT_SHAPE_STYLE, DEFAULT_TEXT_STYLE, MAX_PAGE_WIDTH } from "./types";
+import { DEFAULT_SHAPE_STYLE, DEFAULT_TEXT_STYLE, MAX_PAGE_WIDTH, MAX_ZOOM, MIN_ZOOM, ZOOM_STEP } from "./types";
 
 interface EditorWorkspaceProps {
   file: File;
@@ -42,10 +42,6 @@ interface OutlineNode {
 }
 
 type AnnotationInput = Omit<EditorTextAnnotation, "id"> | Omit<EditorShapeAnnotation, "id">;
-
-const MIN_ZOOM = 0.5;
-const MAX_ZOOM = 2;
-const ZOOM_STEP = 0.1;
 
 let idCounter = 0;
 function nextId(): string {
@@ -275,6 +271,10 @@ export function EditorWorkspace({ file }: EditorWorkspaceProps) {
     setZoom((prev) => Math.min(MAX_ZOOM, Math.max(MIN_ZOOM, Math.round((prev + delta) * 10) / 10)));
   };
 
+  const handleZoomChange = (next: number) => {
+    setZoom(Math.min(MAX_ZOOM, Math.max(MIN_ZOOM, Math.round(next * 10) / 10)));
+  };
+
   if (pdfError) {
     return (
       <div className="flex h-full items-center justify-center rounded-2xl border border-line bg-surface p-6">
@@ -367,6 +367,7 @@ export function EditorWorkspace({ file }: EditorWorkspaceProps) {
           pageCount={pageCount}
           baseWidth={pageWidth}
           renderWidth={renderWidth}
+          zoom={zoom}
           mode={mode}
           containerRef={containerRef}
           pageEls={pageEls}
@@ -384,6 +385,7 @@ export function EditorWorkspace({ file }: EditorWorkspaceProps) {
           onRemove={removeAnnotation}
           onSelect={setSelectedId}
           onActivePageChange={setActivePage}
+          onZoomChange={handleZoomChange}
           onTextReady={handleTextReady}
           onTextEdit={handleTextEdit}
         />

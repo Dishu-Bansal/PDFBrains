@@ -3,12 +3,7 @@ import type { PDFDocumentProxy } from "pdfjs-dist";
 import { useEffect, useRef, useState } from "react";
 
 import { usePdfDocument } from "../lib/pdf";
-import {
-  applyTextEdits,
-  cacheTextEditorPdf,
-  clearTextEditorCache,
-  extractTextEditorJson,
-} from "../lib/api";
+import { extractTextEditorJson, renderTextEditorPdf } from "../lib/api";
 import type { TextEditorDocument, TextEditorPage } from "../lib/api";
 import { baseName, downloadBlob } from "../lib/process";
 
@@ -77,36 +72,25 @@ function PageCanvas({
 export function EditPdfWorkspace({ file }: EditPdfWorkspaceProps) {
   const { doc, pageCount, loading, error: pdfError } = usePdfDocument(file);
   const [document, setDocument] = useState<TextEditorDocument | null>(null);
-  const [jobId, setJobId] = useState<string | null>(null);
   const [loadError, setLoadError] = useState<string | null>(null);
   const [busy, setBusy] = useState(false);
   const [applied, setApplied] = useState<string | null>(null);
-  const jobRef = useRef<string | null>(null);
   const originalRef = useRef<TextEditorDocument | null>(null);
 
-  // Extract the editable JSON and cache the PDF for the job on file change.
+  // Extract the editable JSON on file change.
   useEffect(() => {
     let cancelled = false;
     setDocument(null);
-    setJobId(null);
     setLoadError(null);
     setApplied(null);
     originalRef.current = null;
 
     (async () => {
       try {
-        const [json, cachedJobId] = await Promise.all([
-          extractTextEditorJson(file),
-          cacheTextEditorPdf(file),
-        ]);
-        if (cancelled) {
-          clearTextEditorCache(cachedJobId).catch(() => {});
-          return;
-        }
-        jobRef.current = cachedJobId;
+        const json = await extractTextEditorJson(file);
+        if (cancelled) return;
         originalRef.current = json;
         setDocument(json);
-        setJobId(cachedJobId);
       } catch (err) {
         if (!cancelled) {
           setLoadError(
@@ -118,10 +102,6 @@ export function EditPdfWorkspace({ file }: EditPdfWorkspaceProps) {
 
     return () => {
       cancelled = true;
-      if (jobRef.current) {
-        clearTextEditorCache(jobRef.current).catch(() => {});
-        jobRef.current = null;
-      }
     };
   }, [file]);
 
@@ -142,16 +122,13 @@ export function EditPdfWorkspace({ file }: EditPdfWorkspaceProps) {
   };
 
   const done = async () => {
-    if (!document || !jobId || busy) return;
+    if (!document || busy) return;
     setBusy(true);
     setApplied(null);
     try {
-      const blob = await applyTextEdits(jobId, document, file.name);
+      const blob = await renderTextEditorPdf(document, file.name);
       downloadBlob(blob, `${baseName(file)}-edited.pdf`);
-      setApplied("Edited PDF downloaded. The server cache was cleared.");
-      await clearTextEditorCache(jobId).catch(() => {});
-      jobRef.current = null;
-      setJobId(null);
+      setApplied("Edited PDF downloaded.");
     } catch (err) {
       setApplied(
         err instanceof Error ? err.message : "Could not apply the edits."
@@ -201,7 +178,7 @@ export function EditPdfWorkspace({ file }: EditPdfWorkspaceProps) {
         <div>
           <h2 className="text-[15px] font-semibold">{file.name}</h2>
           <p className="mt-0.5 text-[13px] text-muted">
-            {loading ? "Reading..." : document && jobId
+            {loading ? "Reading..." : document
               ? `${pageCount} page${pageCount === 1 ? "" : "s"} · click any text to edit`
               : "Extracting editable text..."}
           </p>
@@ -215,7 +192,7 @@ export function EditPdfWorkspace({ file }: EditPdfWorkspaceProps) {
           <button
             type="button"
             onClick={done}
-            disabled={!document || !jobId || busy}
+            disabled={!document || busy}
             className="inline-flex h-11 items-center gap-2 rounded-full bg-ink px-6 text-[14px] font-medium text-paper transition hover:opacity-90 active:scale-[0.97] disabled:cursor-not-allowed disabled:opacity-40"
           >
             {busy ? (
@@ -228,7 +205,7 @@ export function EditPdfWorkspace({ file }: EditPdfWorkspaceProps) {
         </div>
       </div>
 
-      {!document || !jobId ? (
+      {!document ? (
         <p className="mt-6 text-[14px] text-muted" aria-busy="true">
           Extracting editable text from the pages...
         </p>

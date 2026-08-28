@@ -299,17 +299,30 @@ export async function extractTextEditorJson(file: File): Promise<TextEditorDocum
   return response.json();
 }
 
-/** Caches the PDF for editing; the job id comes back in the X-Job-Id header. */
-export async function cacheTextEditorPdf(file: File): Promise<string> {
+/**
+ * Renders an edited text-editor document back to a PDF via the JSON-file
+ * endpoint. This is the browser-friendly path: the job-id flow
+ * (/text-editor/partial/{jobId}) needs the X-Job-Id response header exposed
+ * by CORS, which the deployment currently does not do.
+ */
+export async function renderTextEditorPdf(
+  document: TextEditorDocument,
+  filename: string
+): Promise<Blob> {
   if (!API_KEY) {
     throw new Error(
       "The backend API key is not configured. Add VITE_PDFBRAINS_API_KEY to your environment."
     );
   }
-  const form = buildForm(file, {});
+  const form = new FormData();
+  form.append(
+    "fileInput",
+    new Blob([JSON.stringify(document)], { type: "application/json" }),
+    filename
+  );
   let response: Response;
   try {
-    response = await fetch(`${API_URL}/api/v1/convert/pdf/text-editor/metadata`, {
+    response = await fetch(`${API_URL}/api/v1/convert/text-editor/pdf`, {
       method: "POST",
       headers: { "X-API-Key": API_KEY },
       body: form,
@@ -322,56 +335,7 @@ export async function cacheTextEditorPdf(file: File): Promise<string> {
   if (!response.ok) {
     throw new Error(describeStatus(response.status));
   }
-  const jobId = response.headers.get("x-job-id");
-  if (!jobId) {
-    throw new Error("The backend did not return a job id for the text editor.");
-  }
-  return jobId;
-}
-
-/** Applies the edited document for a job and returns the updated PDF. */
-export async function applyTextEdits(
-  jobId: string,
-  document: TextEditorDocument,
-  filename: string
-): Promise<Blob> {
-  if (!API_KEY) {
-    throw new Error(
-      "The backend API key is not configured. Add VITE_PDFBRAINS_API_KEY to your environment."
-    );
-  }
-  let response: Response;
-  try {
-    response = await fetch(
-      `${API_URL}/api/v1/convert/pdf/text-editor/partial/${jobId}?filename=${encodeURIComponent(filename)}`,
-      {
-        method: "POST",
-        headers: { "X-API-Key": API_KEY, "Content-Type": "application/json" },
-        body: JSON.stringify(document),
-      }
-    );
-  } catch {
-    throw new Error(
-      `Could not reach the backend at ${API_URL}. Check the URL and that CORS is enabled on the Stirling PDF instance.`
-    );
-  }
-  if (!response.ok) {
-    throw new Error(describeStatus(response.status));
-  }
   return response.blob();
-}
-
-/** Clears the server-side cache for a text-editor job. */
-export async function clearTextEditorCache(jobId: string): Promise<void> {
-  if (!API_KEY) return;
-  try {
-    await fetch(`${API_URL}/api/v1/convert/pdf/text-editor/clear-cache/${jobId}`, {
-      method: "POST",
-      headers: { "X-API-Key": API_KEY },
-    });
-  } catch {
-    /* cache cleanup is best-effort */
-  }
 }
 
 /** Converts an Office file (docx, pptx, xlsx, ...) to a PDF blob. */

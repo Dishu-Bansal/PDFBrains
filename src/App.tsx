@@ -11,6 +11,18 @@ const ToolPage = lazy(() =>
   import("./pages/ToolPage").then((module) => ({ default: module.ToolPage }))
 );
 
+const AiAssist = lazy(() =>
+  import("./pages/AiAssist").then((module) => ({ default: module.AiAssist }))
+);
+
+function RouteFallback() {
+  return (
+    <div className="flex min-h-[60dvh] items-center justify-center">
+      <div className="h-8 w-8 animate-spin rounded-full border-2 border-line border-t-accent" />
+    </div>
+  );
+}
+
 export default function App() {
   return (
     <>
@@ -18,15 +30,17 @@ export default function App() {
       <Routes>
         <Route path="/" element={<Home />} />
         <Route
+          path="/ai-assist"
+          element={
+            <Suspense fallback={<RouteFallback />}>
+              <AiAssist />
+            </Suspense>
+          }
+        />
+        <Route
           path="/tools/:slug"
           element={
-            <Suspense
-              fallback={
-                <div className="flex min-h-[60dvh] items-center justify-center">
-                  <div className="h-8 w-8 animate-spin rounded-full border-2 border-line border-t-accent" />
-                </div>
-              }
-            >
+            <Suspense fallback={<RouteFallback />}>
               <ToolPage />
             </Suspense>
           }

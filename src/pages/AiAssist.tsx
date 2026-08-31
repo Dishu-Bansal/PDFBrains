@@ -3,7 +3,6 @@ import {
   FilePdf,
   Paperclip,
   Sparkle,
-  SpinnerGap,
   WarningCircle,
   X,
 } from "@phosphor-icons/react";
@@ -13,15 +12,18 @@ import type { DragEvent, KeyboardEvent } from "react";
 import { Nav } from "../components/Nav";
 import { isLlmConfigured } from "../lib/llm";
 import { runLlmChat } from "../lib/llm/chat";
-import { extractFileText, fileTextBlock } from "../lib/llm/fileText";
-import type { IndexedFile } from "../lib/llm/fileText";
 import type { LlmMessage } from "../lib/llm/types";
+
+interface ChatFile {
+  name: string;
+  size: number;
+}
 
 interface ChatMessage {
   id: number;
   role: "user" | "assistant";
   text: string;
-  files: IndexedFile[];
+  files: ChatFile[];
   error?: boolean;
 }
 
@@ -34,8 +36,11 @@ const SUGGESTIONS = [
 
 const SYSTEM_PROMPT =
   "You are AI Assist inside PDFBrains, a browser PDF tool suite. Users attach " +
-  "documents and ask questions about them. Answer clearly and concisely, and when " +
-  "a tool is available for the request, call it instead of guessing.";
+  "files and reference them in their message with @mentions. When a request " +
+  "needs a file, call the matching tool with the referenced file name; never " +
+  "guess file contents. Answer clearly and concisely.";
+
+const ZWSP = "\u200b";
 
 let messageCounter = 0;
 const nextMessageId = () => {
@@ -48,7 +53,7 @@ function formatSize(bytes: number): string {
   return `${(bytes / (1024 * 1024)).toFixed(1)} MB`;
 }
 
-function unconfiguredReply(text: string, files: IndexedFile[]): string {
+function unconfiguredReply(text: string, files: ChatFile[]): string {
   if (files.length > 0) {
     const names = files.map((file) => file.name).join(", ");
     return `I can see ${files.length} file${files.length === 1 ? "" : "s"} attached (${names}), but I'm not connected to the AI backend yet. Add your DeepSeek API key as VITE_DEEPSEEK_API_KEY in .env.local and restart the dev server, then I'll answer for real.`;
@@ -56,23 +61,28 @@ function unconfiguredReply(text: string, files: IndexedFile[]): string {
   return `You asked: "${text}". I'm not connected to the AI backend yet. Add your DeepSeek API key as VITE_DEEPSEEK_API_KEY in .env.local and restart the dev server, then I'll answer for real.`;
 }
 
+function chipForFile(file: ChatFile): string {
+  return `@${file.name}`;
+}
+
 /**
  * AI Assist: a chat interface for asking questions about documents. Files are
- * dropped or attached in the composer, their text is extracted client-side,
- * and the conversation runs against the active LLM provider (DeepSeek by
- * default; swap via VITE_LLM_PROVIDER). Tool calls resolve through the LLM
- * tool registry, so the ~20 PDF tools can plug in later.
+ * dropped or attached in the composer and referenced in the message with
+ * @mentions, which render as chips (Backspace removes a whole chip). File
+ * contents are not extracted client-side; the LLM works with files through
+ * the tool registry instead. Tool calls resolve through the LLM layer, so the
+ * ~20 PDF tools can plug in later.
  */
 export function AiAssist() {
   const [messages, setMessages] = useState<ChatMessage[]>([]);
   const [draft, setDraft] = useState("");
-  const [files, setFiles] = useState<IndexedFile[]>([]);
+  const [files, setFiles] = useState<ChatFile[]>([]);
   const [typing, setTyping] = useState(false);
   const [dragging, setDragging] = useState(false);
   const [mentionQuery, setMentionQuery] = useState<string | null>(null);
   const [mentionIndex, setMentionIndex] = useState(0);
   const inputRef = useRef<HTMLInputElement>(null);
-  const textareaRef = useRef<HTMLTextAreaElement>(null);
+  const composerRef = useRef<HTMLDivElement>(null);
   const endRef = useRef<HTMLDivElement>(null);
 
   const configured = isLlmConfigured();
@@ -83,42 +93,35 @@ export function AiAssist() {
 
   const addFiles = (list: FileList | null) => {
     if (!list || list.length === 0) return;
-    const entries = Array.from(list);
-    const pending: IndexedFile[] = entries.map((file) => ({
-      name: file.name,
-      size: file.size,
-      text: "",
-      status: "reading",
-    }));
-    setFiles((prev) => [...prev, ...pending]);
-    pending.forEach(async (entry, index) => {
-      const indexed = await extractFileText(entries[index]);
-      setFiles((prev) => prev.map((f) => (f === entry ? indexed : f)));
-    });
+    const next = Array.from(list).map((file) => ({ name: file.name, size: file.size }));
+    setFiles((prev) => [...prev, ...next]);
   };
 
   const removeFile = (index: number) => {
     setFiles((prev) => prev.filter((_, i) => i !== index));
   };
 
-  // When a message references files with @mentions, only those files are sent
-  // as context; otherwise all attached files travel with the message.
+  /** Reads the composer's current text (chips included) into `draft`. */
+  const syncDraft = () => {
+    const text = composerRef.current
+      ? (composerRef.current.innerText ?? "").replace(/\u200b/g, "").trim()
+      : "";
+    setDraft(text);
+  };
+
   const toLlmHistory = (history: ChatMessage[]): LlmMessage[] =>
     history
       .filter((message) => !message.error)
-      .map((message) => {
-        if (message.role === "assistant") return { role: "assistant", content: message.text };
-        const mentioned = message.files.filter((file) =>
-          message.text.toLowerCase().includes(`@${file.name.toLowerCase()}`)
-        );
-        const contextFiles = mentioned.length > 0 ? mentioned : message.files;
-        const blocks = contextFiles.filter((file) => file.text).map(fileTextBlock);
-        const content = [message.text, ...blocks].filter(Boolean).join("\n\n");
-        return { role: "user", content };
-      });
+      .map((message) =>
+        message.role === "assistant"
+          ? { role: "assistant", content: message.text }
+          : { role: "user", content: message.text }
+      );
 
-  const send = async (text?: string, attached?: IndexedFile[]) => {
-    const content = (text ?? draft).trim();
+  const send = async (text?: string, attached?: ChatFile[]) => {
+    const content = (text ?? (composerRef.current?.innerText ?? ""))
+      .replace(/\u200b/g, "")
+      .trim();
     const attach = attached ?? files;
     if ((!content && attach.length === 0) || typing) return;
 
@@ -130,9 +133,9 @@ export function AiAssist() {
     };
     const history = [...messages, userMessage];
     setMessages(history);
+    if (composerRef.current) composerRef.current.textContent = "";
     setDraft("");
     setFiles([]);
-    if (textareaRef.current) textareaRef.current.style.height = "auto";
     setTyping(true);
 
     if (!configured) {
@@ -178,12 +181,24 @@ export function AiAssist() {
       : [];
   const safeMentionIndex = Math.min(mentionIndex, Math.max(0, mentionResults.length - 1));
 
-  const updateMention = (text: string, caret: number) => {
+  /** Recomputes the mention popup from the caret position in the composer. */
+  const updateMention = () => {
     if (files.length === 0) {
       setMentionQuery(null);
       return;
     }
-    const match = text.slice(0, caret).match(/@([^@\n]*)$/);
+    const selection = window.getSelection();
+    if (!selection || !selection.isCollapsed || !selection.anchorNode) {
+      setMentionQuery(null);
+      return;
+    }
+    const node = selection.anchorNode;
+    if (node.nodeType !== Node.TEXT_NODE) {
+      setMentionQuery(null);
+      return;
+    }
+    const before = (node.textContent ?? "").slice(0, selection.anchorOffset);
+    const match = before.match(/@([^@\n]*)$/);
     if (match) {
       setMentionQuery(match[1]);
       setMentionIndex(0);
@@ -192,25 +207,93 @@ export function AiAssist() {
     }
   };
 
-  const selectMention = (file: IndexedFile) => {
-    const el = textareaRef.current;
-    if (!el) return;
-    const caret = el.selectionStart ?? draft.length;
-    const before = draft.slice(0, caret);
-    const after = draft.slice(caret);
-    const match = before.match(/@([^@\n]*)$/);
-    const next = (match ? before.slice(0, match.index ?? 0) + `@${file.name}` : before) + after;
-    setDraft(next);
+  /** Replaces the pending "@query" run with a chip followed by a caret anchor. */
+  const insertMention = (file: ChatFile) => {
+    const div = composerRef.current;
+    const selection = window.getSelection();
+    if (!div || !selection || selection.rangeCount === 0) return;
+    const range = selection.getRangeAt(0);
+
+    const node = range.startContainer;
+    if (node.nodeType === Node.TEXT_NODE) {
+      const text = node.textContent ?? "";
+      const before = text.slice(0, range.startOffset);
+      const match = before.match(/@([^@\n]*)$/);
+      if (match && match.index !== undefined) {
+        range.setStart(node, match.index);
+      }
+    }
+    range.deleteContents();
+
+    const chip = document.createElement("span");
+    chip.className = "mention-chip";
+    chip.contentEditable = "false";
+    chip.textContent = chipForFile(file);
+    const caretAnchor = document.createTextNode(ZWSP);
+
+    range.insertNode(chip);
+    range.setStartAfter(chip);
+    range.insertNode(caretAnchor);
+    range.setStartAfter(caretAnchor);
+    range.collapse(true);
+    selection.removeAllRanges();
+    selection.addRange(range);
+
     setMentionQuery(null);
-    requestAnimationFrame(() => {
-      el.focus();
-      const pos = match ? (match.index ?? 0) + 1 + file.name.length : caret;
-      el.setSelectionRange(pos, pos);
-      resizeTextarea();
-    });
+    syncDraft();
+    div.focus();
   };
 
-  const onTextareaKeyDown = (event: KeyboardEvent<HTMLTextAreaElement>) => {
+  /** Deletes the chip immediately before the caret (with its anchor). */
+  const deleteChipBeforeCaret = (): boolean => {
+    const selection = window.getSelection();
+    if (!selection || !selection.isCollapsed || !selection.anchorNode) return false;
+    const node = selection.anchorNode;
+
+    let chip: HTMLElement | null = null;
+    let caretText: Node | null = null;
+
+    if (node.nodeType === Node.TEXT_NODE) {
+      const before = (node.textContent ?? "").slice(0, selection.anchorOffset);
+      if (before.replace(/\u200b/g, "").trim() !== "") return false; // real text before caret
+      caretText = node;
+      let prev: Node | null = node.previousSibling;
+      while (
+        prev &&
+        prev.nodeType === Node.TEXT_NODE &&
+        (prev.textContent ?? "").replace(/\u200b/g, "").trim() === ""
+      ) {
+        prev = prev.previousSibling;
+      }
+      if (prev && prev.nodeType === Node.ELEMENT_NODE && prev instanceof HTMLElement && prev.classList.contains("mention-chip")) {
+        chip = prev;
+      }
+    } else {
+      const child = node.childNodes[selection.anchorOffset - 1] ?? null;
+      if (child instanceof HTMLElement && child.classList.contains("mention-chip")) {
+        chip = child;
+      }
+    }
+
+    if (!chip) return false;
+    // Remove trailing whitespace-only anchors between the chip and the caret.
+    let next = chip.nextSibling;
+    while (
+      next &&
+      next !== caretText &&
+      next.nodeType === Node.TEXT_NODE &&
+      (next.textContent ?? "").replace(/\u200b/g, "").trim() === ""
+    ) {
+      const remove = next;
+      next = remove.nextSibling;
+      remove.remove();
+    }
+    chip.remove();
+    syncDraft();
+    return true;
+  };
+
+  const onComposerKeyDown = (event: KeyboardEvent<HTMLDivElement>) => {
     if (mentionQuery !== null && mentionResults.length > 0) {
       if (event.key === "ArrowDown") {
         event.preventDefault();
@@ -224,7 +307,7 @@ export function AiAssist() {
       }
       if (event.key === "Enter" || event.key === "Tab") {
         event.preventDefault();
-        selectMention(mentionResults[safeMentionIndex]);
+        insertMention(mentionResults[safeMentionIndex]);
         return;
       }
       if (event.key === "Escape") {
@@ -233,17 +316,14 @@ export function AiAssist() {
         return;
       }
     }
+    if (event.key === "Backspace" && deleteChipBeforeCaret()) {
+      event.preventDefault();
+      return;
+    }
     if (event.key === "Enter" && !event.shiftKey) {
       event.preventDefault();
       send();
     }
-  };
-
-  const resizeTextarea = () => {
-    const el = textareaRef.current;
-    if (!el) return;
-    el.style.height = "auto";
-    el.style.height = `${Math.min(el.scrollHeight, 144)}px`;
   };
 
   const clearChat = () => {
@@ -252,11 +332,20 @@ export function AiAssist() {
   };
 
   const pickSuggestion = (text: string) => {
+    const div = composerRef.current;
+    if (!div) return;
+    div.textContent = text;
     setDraft(text);
-    requestAnimationFrame(() => textareaRef.current?.focus());
+    requestAnimationFrame(() => {
+      div.focus();
+      const range = document.createRange();
+      range.selectNodeContents(div);
+      range.collapse(false);
+      const selection = window.getSelection();
+      selection?.removeAllRanges();
+      selection?.addRange(range);
+    });
   };
-
-  const filesReading = files.some((file) => file.status === "reading");
 
   return (
     <>
@@ -270,7 +359,7 @@ export function AiAssist() {
             <div>
               <h1 className="text-2xl font-semibold tracking-tight">AI Assist</h1>
               <p className="mt-0.5 text-[14px] leading-relaxed text-muted">
-                Ask questions about your documents. Attached files are read and sent along with your message.
+                Ask questions about your documents. Reference attached files in your message with @mentions.
               </p>
             </div>
           </div>
@@ -334,7 +423,7 @@ export function AiAssist() {
                       type="button"
                       onMouseDown={(event) => event.preventDefault()}
                       onMouseEnter={() => setMentionIndex(index)}
-                      onClick={() => selectMention(file)}
+                      onClick={() => insertMention(file)}
                       className={[
                         "flex w-full items-center gap-2 rounded-lg px-2.5 py-1.5 text-left text-[13px] transition",
                         index === safeMentionIndex ? "bg-raised text-ink" : "text-ink hover:bg-raised",
@@ -351,6 +440,7 @@ export function AiAssist() {
               </ul>
             </div>
           )}
+
           {files.length > 0 && (
             <ul className="mb-2.5 flex flex-wrap gap-2">
               {files.map((file, index) => (
@@ -358,10 +448,9 @@ export function AiAssist() {
                   key={`${file.name}-${file.size}`}
                   className="flex items-center gap-2 rounded-full border border-line bg-paper py-1 pl-2.5 pr-1.5"
                 >
-                  <FileStatusIcon file={file} />
+                  <FilePdf size={14} className="shrink-0 text-accent" weight="regular" />
                   <span className="max-w-[160px] truncate text-[12px]">{file.name}</span>
                   <span className="font-mono text-[10px] text-muted">{formatSize(file.size)}</span>
-                  <FileStatusHint file={file} />
                   <button
                     type="button"
                     onClick={() => removeFile(index)}
@@ -384,31 +473,27 @@ export function AiAssist() {
             >
               <Paperclip size={20} weight="regular" />
             </button>
-            <textarea
-              ref={textareaRef}
-              rows={1}
-              value={draft}
-              onChange={(event) => {
-                const value = event.target.value;
-                setDraft(value);
-                updateMention(value, event.target.selectionStart ?? value.length);
-                resizeTextarea();
+            <div
+              ref={composerRef}
+              contentEditable
+              role="textbox"
+              aria-multiline="true"
+              data-placeholder="Ask about your documents..."
+              onInput={() => {
+                syncDraft();
+                updateMention();
               }}
-              onKeyDown={onTextareaKeyDown}
-              onKeyUp={(event) =>
-                updateMention(event.currentTarget.value, event.currentTarget.selectionStart ?? 0)
-              }
-              onClick={(event) =>
-                updateMention(event.currentTarget.value, event.currentTarget.selectionStart ?? 0)
-              }
+              onKeyDown={onComposerKeyDown}
+              onKeyUp={updateMention}
+              onClick={updateMention}
+              onSelect={updateMention}
               onBlur={() => setMentionQuery(null)}
-              placeholder="Ask about your documents..."
-              className="max-h-36 min-h-10 flex-1 resize-none bg-transparent px-1.5 py-2 text-[14px] leading-relaxed text-ink outline-none placeholder:text-muted"
+              className="max-h-36 min-h-10 flex-1 overflow-y-auto whitespace-pre-wrap break-words px-1.5 py-2 text-[14px] leading-relaxed text-ink outline-none"
             />
             <button
               type="button"
               onClick={() => send()}
-              disabled={(!draft.trim() && files.length === 0) || typing || filesReading}
+              disabled={(!draft.trim() && files.length === 0) || typing}
               aria-label="Send message"
               className="flex size-10 shrink-0 items-center justify-center rounded-full bg-ink text-paper transition hover:opacity-90 active:scale-95 disabled:cursor-not-allowed disabled:opacity-35"
             >
@@ -440,25 +525,6 @@ export function AiAssist() {
   );
 }
 
-function FileStatusIcon({ file }: { file: IndexedFile }) {
-  if (file.status === "reading") {
-    return <SpinnerGap size={14} className="animate-spin text-accent" />;
-  }
-  if (file.status === "unsupported" || file.status === "error") {
-    return <WarningCircle size={14} className="shrink-0 text-danger" />;
-  }
-  return <FilePdf size={14} className="shrink-0 text-accent" weight="regular" />;
-}
-
-function FileStatusHint({ file }: { file: IndexedFile }) {
-  if (file.status === "unsupported") return <span className="text-[10px] text-muted">unsupported type</span>;
-  if (file.status === "error") return <span className="text-[10px] text-danger">failed to read</span>;
-  if (file.status === "indexed" && !file.text) {
-    return <span className="text-[10px] text-muted">no extractable text</span>;
-  }
-  return null;
-}
-
 function WelcomePanel({
   onSuggestion,
   configured,
@@ -473,8 +539,8 @@ function WelcomePanel({
       </span>
       <h2 className="mt-4 text-xl font-semibold tracking-tight">Ask anything about your documents</h2>
       <p className="mt-1.5 max-w-[46ch] text-[14px] leading-relaxed text-muted">
-        Drop PDFs, Word files or text into the chat below, then ask questions about them. Text is
-        extracted from PDFs right in your browser.
+        Drop PDFs, Word files or text into the chat below, then ask questions about them. Use{" "}
+        <span className="font-mono text-ink">@</span> to point at a specific file.
       </p>
       <div className="mt-5 flex flex-wrap items-center justify-center gap-2">
         {SUGGESTIONS.map((suggestion) => (
@@ -516,18 +582,26 @@ function MessageBubble({ message }: { message: ChatMessage }) {
         {message.text && <p className="whitespace-pre-wrap">{message.text}</p>}
         {message.files.length > 0 && (
           <ul className={message.text ? "mt-2.5 space-y-1.5" : "space-y-1.5"}>
-            {message.files.map((file) => (
-              <li
-                key={`${file.name}-${file.size}`}
-                className="flex items-center gap-2 rounded-lg bg-paper/15 px-2.5 py-1.5"
-              >
-                <FileStatusIcon file={file} />
-                <span className="min-w-0 truncate text-[13px]">{file.name}</span>
-                <span className="ml-auto shrink-0 font-mono text-[11px] opacity-60">
-                  {formatSize(file.size)}
-                </span>
-              </li>
-            ))}
+            {message.files.map((file) => {
+              const referenced = message.text.toLowerCase().includes(`@${file.name.toLowerCase()}`);
+              return (
+                <li
+                  key={`${file.name}-${file.size}`}
+                  className="flex items-center gap-2 rounded-lg bg-paper/15 px-2.5 py-1.5"
+                >
+                  <FilePdf size={14} className="shrink-0 text-accent" weight="regular" />
+                  <span className="min-w-0 truncate text-[13px]">{file.name}</span>
+                  <span className="ml-auto shrink-0 font-mono text-[11px] opacity-60">
+                    {formatSize(file.size)}
+                  </span>
+                  {referenced && (
+                    <span className="shrink-0 rounded-full bg-accent/25 px-1.5 py-0.5 font-mono text-[10px] text-accentstrong">
+                      referenced
+                    </span>
+                  )}
+                </li>
+              );
+            })}
           </ul>
         )}
       </div>

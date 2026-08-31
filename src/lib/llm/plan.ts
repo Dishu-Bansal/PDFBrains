@@ -55,6 +55,12 @@ export interface PlanStep {
   description: string;
 }
 
+export interface PlannerFile {
+  name: string;
+  /** Page count when known, so the model can pick split sizes accurately. */
+  pages?: number;
+}
+
 const PLAN_TOOLS: PlanToolName[] = [
   "merge-pdf",
   "extract-pages",
@@ -63,22 +69,29 @@ const PLAN_TOOLS: PlanToolName[] = [
   "organize-pdf",
 ];
 
-function plannerPrompt(fileNames: string[]): string {
+function plannerPrompt(files: PlannerFile[]): string {
+  const fileLines = files.length
+    ? files.map((file) => `- ${file.name}${file.pages ? ` (${file.pages} pages)` : ""}`).join("\n")
+    : "- none";
   return [
     "You are the operations planner for PDFBrains, a browser PDF tool suite.",
     "The user wants a sequence of PDF operations that produces a final file.",
-    `Attached files (reference them by exact name): ${fileNames.join(", ") || "none"}.`,
+    `Attached files (reference them by exact name):\n${fileLines}`,
     "",
-    "Available tools:",
-    "- merge-pdf: merge multiple PDFs into one, in order (params: files: string[]).",
-    "- extract-pages: extract 1-based pages from a PDF into a new PDF (params: file, pages: number[]).",
-    "- remove-pages: remove 1-based pages from a PDF, keeping the rest (params: file, pages: number[]).",
-    "- split-pdf: split a PDF into parts and package them as a ZIP (params: file, and one of groups: number[][], every: integer, sizeMB: number; optional outputPrefix). Parts are named <outputPrefix>_1.pdf, <outputPrefix>_2.pdf, ... and the ZIP is saved under outputFile.",
-    "- organize-pdf: build a new PDF from pages across files (params: files: string[], order: [{file, page}]).",
+    "Available tools, and when to use them:",
+    "- split-pdf: split ONE PDF into multiple parts (by groups of 1-based pages, every N pages, or sizeMB) and package them as a ZIP. USE THIS whenever the user asks to split, divide or break a PDF into parts; never emulate splitting with one extract step per part.",
+    "- organize-pdf: build a new PDF by taking pages from one or more files in a chosen order (reorder, rearrange, shuffle, compile pages across files). USE THIS for organize/reorder/compile requests instead of chaining many extract and merge steps.",
+    "- merge-pdf: merge whole PDF files into one, in order (params: files: string[]).",
+    "- extract-pages: pull specific 1-based pages out of ONE PDF into a new PDF (params: file, pages: number[]).",
+    "- remove-pages: delete specific 1-based pages from a PDF, keeping the rest (params: file, pages: number[]).",
     "",
     "Plan the steps in dependency order. A step may use, as input, an attached",
-    "file or a file produced by an earlier step (by its outputFile name, or a",
-    "split part name like <outputPrefix>_2.pdf).",
+    "file, a file produced by an earlier step (by its outputFile name), or a",
+    "split part name like <outputPrefix>_2.pdf. A split step creates parts",
+    "named <outputPrefix>_1.pdf, <outputPrefix>_2.pdf, ... plus a ZIP saved",
+    "under its outputFile.",
+    "Prefer the FEWEST steps: if one split-pdf or organize-pdf call expresses",
+    "part of the request, use it instead of expanding into many smaller steps.",
     "Every step must set a unique outputFile name (ending in .pdf, or .zip for",
     "a split) and a short human-readable description shown to the user for",
     "confirmation.",
@@ -179,10 +192,10 @@ function createPlanTool(): LlmTool {
  * Asks the active LLM for a JSON-only operation plan. The model is forced to
  * answer through the create_plan tool, so the reply is structured JSON.
  */
-export async function runLlmPlan(userText: string, fileNames: string[]): Promise<PlanStep[]> {
+export async function runLlmPlan(userText: string, files: PlannerFile[]): Promise<PlanStep[]> {
   const provider = getLlmProvider();
   const messages: LlmMessage[] = [
-    { role: "system", content: plannerPrompt(fileNames) },
+    { role: "system", content: plannerPrompt(files) },
     { role: "user", content: userText },
   ];
   const result = await provider.chat(messages, {

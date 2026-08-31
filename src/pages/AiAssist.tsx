@@ -17,9 +17,9 @@ import { isLlmConfigured } from "../lib/llm";
 import { runLlmChat } from "../lib/llm/chat";
 import { executePlan, runLlmPlan } from "../lib/llm/plan";
 import { PlanRequestError } from "../lib/llm/plan";
-import type { PlanStep } from "../lib/llm/plan";
+import type { PlanStep, PlannerFile } from "../lib/llm/plan";
 import type { LlmMessage } from "../lib/llm/types";
-import { downloadBlob } from "../lib/process";
+import { downloadBlob, pdfPageCount } from "../lib/process";
 
 interface ChatFile {
   name: string;
@@ -197,8 +197,22 @@ export function AiAssist() {
 
     try {
       if (attach.length > 0) {
-        // Files attached: ask the LLM for a JSON-only operation plan.
-        const steps = await runLlmPlan(content, attach.map((file) => file.name));
+        // Files attached: ask the LLM for a JSON-only operation plan. Page
+        // counts help it pick sensible split sizes and organize groups.
+        const fileInfos: PlannerFile[] = await Promise.all(
+          attach.map(async (file) => {
+            let pages: number | undefined;
+            if (file.name.toLowerCase().endsWith(".pdf")) {
+              try {
+                pages = await pdfPageCount(file.file);
+              } catch {
+                pages = undefined;
+              }
+            }
+            return { name: file.name, pages };
+          })
+        );
+        const steps = await runLlmPlan(content, fileInfos);
         setTyping(false);
         appendMessage({
           id: nextMessageId(),

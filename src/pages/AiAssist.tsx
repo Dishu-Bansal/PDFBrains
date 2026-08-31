@@ -16,6 +16,7 @@ import { Nav } from "../components/Nav";
 import { isLlmConfigured } from "../lib/llm";
 import { runLlmChat } from "../lib/llm/chat";
 import { executePlan, runLlmPlan } from "../lib/llm/plan";
+import { PlanRequestError } from "../lib/llm/plan";
 import type { PlanStep } from "../lib/llm/plan";
 import type { LlmMessage } from "../lib/llm/types";
 import { downloadBlob } from "../lib/process";
@@ -212,6 +213,12 @@ export function AiAssist() {
       }
     } catch (err) {
       setTyping(false);
+      // If the model answered in prose instead of calling create_plan, show
+      // its reply as a normal message rather than an error.
+      if (err instanceof PlanRequestError && err.content) {
+        appendMessage({ id: nextMessageId(), role: "assistant", text: err.content, files: attach });
+        return;
+      }
       const detail = err instanceof Error ? err.message : "The AI request failed. Please try again.";
       appendMessage({ id: nextMessageId(), role: "assistant", text: detail, files: attach, error: true });
     }

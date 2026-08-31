@@ -11,6 +11,18 @@ registerPdfTools();
 
 export type PlanToolName = "merge-pdf" | "extract-pages" | "remove-pages";
 
+/** Thrown when the model replies without calling create_plan. Carries the
+ * model's text so the caller can show it as a regular chat reply. */
+export class PlanRequestError extends Error {
+  content: string;
+
+  constructor(content: string) {
+    super(content || "The AI did not return a plan. Try rewording the request.");
+    this.name = "PlanRequestError";
+    this.content = content;
+  }
+}
+
 export interface PlanStep {
   tool: PlanToolName;
   params: {
@@ -111,13 +123,16 @@ export async function runLlmPlan(userText: string, fileNames: string[]): Promise
   ];
   const result = await provider.chat(messages, {
     tools: [createPlanTool()],
-    toolChoice: { type: "function", function: { name: "create_plan" } },
+    // "auto" rather than a forced choice: thinking models (deepseek-reasoner)
+    // reject a forced tool_choice. Only create_plan is offered, so the model
+    // can either call it or answer in prose.
+    toolChoice: "auto",
     temperature: 0,
   });
 
   const call = result.toolCalls?.find((c) => c.name === "create_plan");
   if (!call) {
-    throw new Error(result.content || "The AI did not return a plan. Try rewording the request.");
+    throw new PlanRequestError(result.content);
   }
 
   let parsed: unknown;

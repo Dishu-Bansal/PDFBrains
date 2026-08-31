@@ -18,7 +18,7 @@ export function downloadBlob(blob: Blob, filename: string): void {
   setTimeout(() => URL.revokeObjectURL(url), 4000);
 }
 
-async function load(file: File): Promise<PDFDocument> {
+async function load(file: File | Blob): Promise<PDFDocument> {
   return PDFDocument.load(await file.arrayBuffer(), { ignoreEncryption: true });
 }
 
@@ -52,7 +52,7 @@ export async function mergePdfBlobs(blobs: Blob[]): Promise<Blob> {
 }
 
 /** Delete pages: removes the given 1-based page numbers. */
-export async function deletePages(file: File, pageNumbers: number[]): Promise<Blob> {
+export async function deletePages(file: File | Blob, pageNumbers: number[]): Promise<Blob> {
   const doc = await load(file);
   const drop = new Set(pageNumbers);
   for (let i = doc.getPageCount() - 1; i >= 0; i--) {
@@ -284,7 +284,7 @@ export async function imagesToPdf(files: File[], options: ImageToPdfOptions = {}
 }
 
 /** Extract pages: save only the selected 1-based pages as a new PDF. */
-export async function extractPages(file: File, selected: number[]): Promise<Blob> {
+export async function extractPages(file: File | Blob, selected: number[]): Promise<Blob> {
   const src = await load(file);
   const out = await PDFDocument.create();
   const pages = await out.copyPages(src, selected.map((p) => p - 1));

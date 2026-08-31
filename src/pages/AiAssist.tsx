@@ -1,8 +1,11 @@
 import {
   ArrowUp,
+  CheckCircle,
+  DownloadSimple,
   FilePdf,
   Paperclip,
   Sparkle,
+  SpinnerGap,
   WarningCircle,
   X,
 } from "@phosphor-icons/react";
@@ -12,19 +15,32 @@ import type { DragEvent, KeyboardEvent } from "react";
 import { Nav } from "../components/Nav";
 import { isLlmConfigured } from "../lib/llm";
 import { runLlmChat } from "../lib/llm/chat";
+import { executePlan, runLlmPlan } from "../lib/llm/plan";
+import type { PlanStep } from "../lib/llm/plan";
 import type { LlmMessage } from "../lib/llm/types";
+import { downloadBlob } from "../lib/process";
 
 interface ChatFile {
   name: string;
   size: number;
+  file: File;
 }
+
+type PlanStatus = "pending" | "running" | "done" | "error";
 
 interface ChatMessage {
   id: number;
   role: "user" | "assistant";
+  kind?: "text" | "plan";
   text: string;
   files: ChatFile[];
   error?: boolean;
+  /** Plan mode fields. */
+  steps?: PlanStep[];
+  planStatus?: PlanStatus;
+  planStepIndex?: number;
+  planFinalName?: string;
+  planError?: string;
 }
 
 const SUGGESTIONS = [
@@ -111,7 +127,7 @@ export function AiAssist() {
 
   const addFiles = (list: FileList | null) => {
     if (!list || list.length === 0) return;
-    const next = Array.from(list).map((file) => ({ name: file.name, size: file.size }));
+    const next = Array.from(list).map((file) => ({ name: file.name, size: file.size, file }));
     setFiles((prev) => [...prev, ...next]);
   };
 
@@ -136,6 +152,10 @@ export function AiAssist() {
           : { role: "user", content: message.text }
       );
 
+  const appendMessage = (message: ChatMessage) => {
+    setMessages((prev) => [...prev, message]);
+  };
+
   const send = async (text?: string, attached?: ChatFile[]) => {
     const content = (text ?? (composerRef.current?.innerText ?? ""))
       .replace(/\u200b/g, "")
@@ -149,8 +169,7 @@ export function AiAssist() {
       text: content,
       files: attach,
     };
-    const history = [...messages, userMessage];
-    setMessages(history);
+    setMessages((prev) => [...prev, userMessage]);
     if (composerRef.current) composerRef.current.textContent = "";
     setDraft("");
     setFiles([]);
@@ -159,31 +178,92 @@ export function AiAssist() {
     if (!configured) {
       window.setTimeout(() => {
         setTyping(false);
-        setMessages((prev) => [
-          ...prev,
-          { id: nextMessageId(), role: "assistant", text: unconfiguredReply(content, attach), files: [] },
-        ]);
+        appendMessage({
+          id: nextMessageId(),
+          role: "assistant",
+          text: unconfiguredReply(content, attach),
+          files: [],
+        });
       }, 500);
       return;
     }
 
     try {
-      const result = await runLlmChat(toLlmHistory(history).slice(-20), {
-        systemPrompt: SYSTEM_PROMPT,
-      });
-      setTyping(false);
-      setMessages((prev) => [
-        ...prev,
-        { id: nextMessageId(), role: "assistant", text: result.content, files: [] },
-      ]);
+      if (attach.length > 0) {
+        // Files attached: ask the LLM for a JSON-only operation plan.
+        const steps = await runLlmPlan(content, attach.map((file) => file.name));
+        setTyping(false);
+        appendMessage({
+          id: nextMessageId(),
+          role: "assistant",
+          kind: "plan",
+          text: "",
+          files: attach,
+          steps,
+          planStatus: "pending",
+          planStepIndex: 0,
+        });
+      } else {
+        const result = await runLlmChat(toLlmHistory(messages).slice(-20), {
+          systemPrompt: SYSTEM_PROMPT,
+        });
+        setTyping(false);
+        appendMessage({ id: nextMessageId(), role: "assistant", text: result.content, files: [] });
+      }
     } catch (err) {
       setTyping(false);
       const detail = err instanceof Error ? err.message : "The AI request failed. Please try again.";
-      setMessages((prev) => [
-        ...prev,
-        { id: nextMessageId(), role: "assistant", text: detail, files: [], error: true },
-      ]);
+      appendMessage({ id: nextMessageId(), role: "assistant", text: detail, files: attach, error: true });
     }
+  };
+
+  // ---- plan execution (for loop, no LLM) ----
+  const blobsRef = useRef(new Map<number, Blob>());
+
+  const runPlan = async (message: ChatMessage) => {
+    if (!message.steps || message.planStatus !== "pending") return;
+    const messageId = message.id;
+    setMessages((prev) =>
+      prev.map((m) => (m.id === messageId ? { ...m, planStatus: "running", planStepIndex: 0 } : m))
+    );
+    const sources = new Map<string, Blob>();
+    message.files.forEach((file) => sources.set(file.name, file.file));
+    try {
+      const { finalName, finalBlob } = await executePlan(message.steps, sources, (index) => {
+        setMessages((prev) =>
+          prev.map((m) => (m.id === messageId ? { ...m, planStepIndex: index } : m))
+        );
+      });
+      blobsRef.current.set(messageId, finalBlob);
+      setMessages((prev) =>
+        prev.map((m) =>
+          m.id === messageId
+            ? { ...m, planStatus: "done", planFinalName: finalName, planStepIndex: message.steps!.length }
+            : m
+        )
+      );
+    } catch (err) {
+      setMessages((prev) =>
+        prev.map((m) =>
+          m.id === messageId
+            ? {
+                ...m,
+                planStatus: "error",
+                planError: err instanceof Error ? err.message : "The plan failed to run.",
+              }
+            : m
+        )
+      );
+    }
+  };
+
+  const dismissPlan = (messageId: number) => {
+    setMessages((prev) => prev.filter((m) => m.id !== messageId));
+  };
+
+  const downloadPlan = (message: ChatMessage) => {
+    const blob = blobsRef.current.get(message.id);
+    if (blob && message.planFinalName) downloadBlob(blob, message.planFinalName);
   };
 
   const onDrop = (event: DragEvent<HTMLDivElement>) => {
@@ -424,9 +504,19 @@ export function AiAssist() {
             <WelcomePanel onSuggestion={pickSuggestion} configured={configured} />
           ) : (
             <div className="space-y-4">
-              {messages.map((message) => (
-                <MessageBubble key={message.id} message={message} />
-              ))}
+              {messages.map((message) =>
+                message.kind === "plan" ? (
+                  <PlanCard
+                    key={message.id}
+                    message={message}
+                    onRun={() => runPlan(message)}
+                    onDismiss={() => dismissPlan(message.id)}
+                    onDownload={() => downloadPlan(message)}
+                  />
+                ) : (
+                  <MessageBubble key={message.id} message={message} />
+                )
+              )}
               {typing && <TypingBubble />}
             </div>
           )}
@@ -580,8 +670,8 @@ function WelcomePanel({
       </span>
       <h2 className="mt-4 text-xl font-semibold tracking-tight">Ask anything about your documents</h2>
       <p className="mt-1.5 max-w-[46ch] text-[14px] leading-relaxed text-muted">
-        Drop PDFs, Word files or text into the chat below, then ask questions about them. Use{" "}
-        <span className="font-mono text-ink">@</span> to point at a specific file.
+        Drop PDFs into the chat, tell it what you want, and it plans the
+        operations step by step for your approval before running them locally.
       </p>
       <div className="mt-5 flex flex-wrap items-center justify-center gap-2">
         {SUGGESTIONS.map((suggestion) => (
@@ -663,5 +753,133 @@ function TypingBubble() {
         ))}
       </div>
     </div>
+  );
+}
+
+const TOOL_LABELS: Record<PlanStep["tool"], string> = {
+  "merge-pdf": "Merge",
+  "extract-pages": "Extract",
+  "remove-pages": "Remove",
+};
+
+/** The LLM's operation plan, shown to the user for confirmation, then run. */
+function PlanCard({
+  message,
+  onRun,
+  onDismiss,
+  onDownload,
+}: {
+  message: ChatMessage;
+  onRun: () => void;
+  onDismiss: () => void;
+  onDownload: () => void;
+}) {
+  const steps = message.steps ?? [];
+  const status = message.planStatus ?? "pending";
+  const running = status === "running";
+  const done = status === "done";
+  const error = status === "error";
+  const current = message.planStepIndex ?? 0;
+
+  return (
+    <div className="flex justify-start">
+      <div className="w-full max-w-[82%] rounded-2xl rounded-bl-md border border-line bg-surface p-4">
+        <div className="flex items-center justify-between gap-2">
+          <p className="text-[13px] font-semibold">
+            Plan · {steps.length} step{steps.length === 1 ? "" : "s"}
+            {running && (
+              <span className="ml-2 text-[12px] font-normal text-muted">
+                running step {Math.min(current + 1, steps.length)} of {steps.length}
+              </span>
+            )}
+          </p>
+          {!running && (
+            <button
+              type="button"
+              onClick={onDismiss}
+              aria-label="Dismiss plan"
+              className="flex size-6 items-center justify-center rounded-full text-muted transition hover:bg-raised hover:text-ink"
+            >
+              <X size={12} weight="bold" />
+            </button>
+          )}
+        </div>
+
+        <ol className="mt-3 space-y-2.5">
+          {steps.map((step, index) => {
+            const passed = done || index < current;
+            const active = running && index === current;
+            return (
+              <li key={index} className="flex items-start gap-2.5">
+                <span
+                  className={[
+                    "flex size-5 shrink-0 items-center justify-center rounded-full font-mono text-[10px]",
+                    active || passed ? "bg-accent text-paper" : "bg-ink/75 text-paper",
+                  ].join(" ")}
+                >
+                  {index + 1}
+                </span>
+                <div className="min-w-0 flex-1">
+                  <div className="flex flex-wrap items-center gap-x-2 gap-y-0.5">
+                    <ToolBadge tool={step.tool} />
+                    <span className="text-[13px] leading-snug">{step.description}</span>
+                  </div>
+                  <p className="mt-0.5 truncate font-mono text-[11px] text-muted">
+                    → {step.outputFile}
+                  </p>
+                </div>
+                {active && <SpinnerGap size={14} className="mt-0.5 animate-spin text-accent" />}
+                {passed && (
+                  <CheckCircle size={14} className="mt-0.5 shrink-0 text-accentstrong" weight="bold" />
+                )}
+              </li>
+            );
+          })}
+        </ol>
+
+        {status === "pending" && (
+          <div className="mt-4">
+            <button
+              type="button"
+              onClick={onRun}
+              className="inline-flex h-9 w-full items-center justify-center gap-2 rounded-full bg-ink px-4 text-[13px] font-medium text-paper transition hover:opacity-90 active:scale-[0.98]"
+            >
+              <CheckCircle size={15} weight="bold" />
+              Approve and run
+            </button>
+            <p className="mt-2 text-[11px] leading-relaxed text-muted">
+              The steps run locally in order, without the AI, using the attached files.
+            </p>
+          </div>
+        )}
+
+        {done && message.planFinalName && (
+          <div className="mt-4">
+            <button
+              type="button"
+              onClick={onDownload}
+              className="inline-flex h-9 w-full items-center justify-center gap-2 rounded-full bg-ink px-4 text-[13px] font-medium text-paper transition hover:opacity-90 active:scale-[0.98]"
+            >
+              <DownloadSimple size={15} weight="bold" />
+              Download {message.planFinalName}
+            </button>
+          </div>
+        )}
+
+        {error && (
+          <p className="mt-3 text-[12px] leading-relaxed text-danger">
+            {message.planError ?? "The plan could not be executed."}
+          </p>
+        )}
+      </div>
+    </div>
+  );
+}
+
+function ToolBadge({ tool }: { tool: PlanStep["tool"] }) {
+  return (
+    <span className="shrink-0 rounded-full bg-accentsoft px-2 py-0.5 font-mono text-[10px] font-medium uppercase tracking-wide text-accentstrong">
+      {TOOL_LABELS[tool]}
+    </span>
   );
 }

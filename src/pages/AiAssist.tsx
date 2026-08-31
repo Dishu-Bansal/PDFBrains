@@ -179,6 +179,27 @@ export function AiAssist() {
           : { role: "user", content: message.text }
       );
 
+  /** Planner history: prior requests, replies and the plans the model gave. */
+  const toPlannerHistory = (history: ChatMessage[]): LlmMessage[] =>
+    history
+      .filter((message) => !message.error)
+      .map((message) => {
+        if (message.kind === "plan") {
+          return {
+            role: "assistant",
+            content: `[Previous plan]\n${JSON.stringify(message.steps ?? [])}`,
+          };
+        }
+        if (message.role === "assistant") {
+          return {
+            role: "assistant",
+            content: message.text,
+            reasoningContent: message.reasoningContent,
+          };
+        }
+        return { role: "user", content: message.text };
+      });
+
   const appendMessage = (message: ChatMessage) => {
     setMessages((prev) => [...prev, message]);
   };
@@ -227,7 +248,11 @@ export function AiAssist() {
         // Ask the LLM for a JSON-only operation plan. Page counts help it
         // pick sensible split sizes and organize groups.
         const fileInfos = await computePlannerFiles(planFiles);
-        const steps = await runLlmPlan(content, fileInfos);
+        const steps = await runLlmPlan(
+          content,
+          fileInfos,
+          toPlannerHistory(messages).slice(-24)
+        );
         setTyping(false);
         appendMessage({
           id: nextMessageId(),

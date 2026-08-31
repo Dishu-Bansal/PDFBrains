@@ -96,6 +96,11 @@ function plannerPrompt(files: PlannerFile[]): string {
     "a split) and a short human-readable description shown to the user for",
     "confirmation.",
     "",
+    "The conversation history follows this message. Use it to understand what",
+    "the user asked before and which plans you already produced; the latest",
+    "user message may ask you to revise a previous plan. Output the FULL new",
+    "plan (all steps), not just the changed ones.",
+    "",
     "Respond with ONLY the JSON plan via the create_plan tool. No prose.",
   ].join("\n");
 }
@@ -191,11 +196,18 @@ function createPlanTool(): LlmTool {
 /**
  * Asks the active LLM for a JSON-only operation plan. The model is forced to
  * answer through the create_plan tool, so the reply is structured JSON.
+ * `history` carries the earlier conversation (requests, replies and previous
+ * plans) so a follow-up message can revise an earlier plan.
  */
-export async function runLlmPlan(userText: string, files: PlannerFile[]): Promise<PlanStep[]> {
+export async function runLlmPlan(
+  userText: string,
+  files: PlannerFile[],
+  history: LlmMessage[] = []
+): Promise<PlanStep[]> {
   const provider = getLlmProvider();
   const messages: LlmMessage[] = [
     { role: "system", content: plannerPrompt(files) },
+    ...history,
     { role: "user", content: userText },
   ];
   const result = await provider.chat(messages, {

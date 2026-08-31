@@ -69,6 +69,8 @@ export function AiAssist() {
   const [files, setFiles] = useState<IndexedFile[]>([]);
   const [typing, setTyping] = useState(false);
   const [dragging, setDragging] = useState(false);
+  const [mentionQuery, setMentionQuery] = useState<string | null>(null);
+  const [mentionIndex, setMentionIndex] = useState(0);
   const inputRef = useRef<HTMLInputElement>(null);
   const textareaRef = useRef<HTMLTextAreaElement>(null);
   const endRef = useRef<HTMLDivElement>(null);
@@ -99,12 +101,18 @@ export function AiAssist() {
     setFiles((prev) => prev.filter((_, i) => i !== index));
   };
 
+  // When a message references files with @mentions, only those files are sent
+  // as context; otherwise all attached files travel with the message.
   const toLlmHistory = (history: ChatMessage[]): LlmMessage[] =>
     history
       .filter((message) => !message.error)
       .map((message) => {
         if (message.role === "assistant") return { role: "assistant", content: message.text };
-        const blocks = message.files.filter((file) => file.text).map(fileTextBlock);
+        const mentioned = message.files.filter((file) =>
+          message.text.toLowerCase().includes(`@${file.name.toLowerCase()}`)
+        );
+        const contextFiles = mentioned.length > 0 ? mentioned : message.files;
+        const blocks = contextFiles.filter((file) => file.text).map(fileTextBlock);
         const content = [message.text, ...blocks].filter(Boolean).join("\n\n");
         return { role: "user", content };
       });
@@ -163,7 +171,68 @@ export function AiAssist() {
     addFiles(event.dataTransfer.files);
   };
 
+  // ---- @-mention autocomplete for attached files ----
+  const mentionResults =
+    mentionQuery !== null
+      ? files.filter((file) => file.name.toLowerCase().includes(mentionQuery.toLowerCase()))
+      : [];
+  const safeMentionIndex = Math.min(mentionIndex, Math.max(0, mentionResults.length - 1));
+
+  const updateMention = (text: string, caret: number) => {
+    if (files.length === 0) {
+      setMentionQuery(null);
+      return;
+    }
+    const match = text.slice(0, caret).match(/@([^@\n]*)$/);
+    if (match) {
+      setMentionQuery(match[1]);
+      setMentionIndex(0);
+    } else {
+      setMentionQuery(null);
+    }
+  };
+
+  const selectMention = (file: IndexedFile) => {
+    const el = textareaRef.current;
+    if (!el) return;
+    const caret = el.selectionStart ?? draft.length;
+    const before = draft.slice(0, caret);
+    const after = draft.slice(caret);
+    const match = before.match(/@([^@\n]*)$/);
+    const next = (match ? before.slice(0, match.index ?? 0) + `@${file.name}` : before) + after;
+    setDraft(next);
+    setMentionQuery(null);
+    requestAnimationFrame(() => {
+      el.focus();
+      const pos = match ? (match.index ?? 0) + 1 + file.name.length : caret;
+      el.setSelectionRange(pos, pos);
+      resizeTextarea();
+    });
+  };
+
   const onTextareaKeyDown = (event: KeyboardEvent<HTMLTextAreaElement>) => {
+    if (mentionQuery !== null && mentionResults.length > 0) {
+      if (event.key === "ArrowDown") {
+        event.preventDefault();
+        setMentionIndex((i) => (i + 1) % mentionResults.length);
+        return;
+      }
+      if (event.key === "ArrowUp") {
+        event.preventDefault();
+        setMentionIndex((i) => (i - 1 + mentionResults.length) % mentionResults.length);
+        return;
+      }
+      if (event.key === "Enter" || event.key === "Tab") {
+        event.preventDefault();
+        selectMention(mentionResults[safeMentionIndex]);
+        return;
+      }
+      if (event.key === "Escape") {
+        event.preventDefault();
+        setMentionQuery(null);
+        return;
+      }
+    }
     if (event.key === "Enter" && !event.shiftKey) {
       event.preventDefault();
       send();
@@ -249,10 +318,39 @@ export function AiAssist() {
           onDragLeave={() => setDragging(false)}
           onDrop={onDrop}
           className={[
-            "mt-4 shrink-0 rounded-2xl border bg-surface p-3 transition",
+            "relative mt-4 shrink-0 rounded-2xl border bg-surface p-3 transition",
             dragging ? "border-accent bg-accentsoft" : "border-line",
           ].join(" ")}
         >
+          {mentionQuery !== null && mentionResults.length > 0 && (
+            <div className="absolute bottom-full left-3 z-20 mb-2 w-[280px] overflow-hidden rounded-xl border border-line bg-paper shadow-xl shadow-ink/5">
+              <p className="border-b border-line px-3 py-2 text-[11px] font-semibold tracking-wide text-muted">
+                Reference a file
+              </p>
+              <ul className="max-h-44 overflow-y-auto p-1" role="listbox" aria-label="Attached files">
+                {mentionResults.map((file, index) => (
+                  <li key={`${file.name}-${file.size}`} role="option" aria-selected={index === safeMentionIndex}>
+                    <button
+                      type="button"
+                      onMouseDown={(event) => event.preventDefault()}
+                      onMouseEnter={() => setMentionIndex(index)}
+                      onClick={() => selectMention(file)}
+                      className={[
+                        "flex w-full items-center gap-2 rounded-lg px-2.5 py-1.5 text-left text-[13px] transition",
+                        index === safeMentionIndex ? "bg-raised text-ink" : "text-ink hover:bg-raised",
+                      ].join(" ")}
+                    >
+                      <FilePdf size={14} className="shrink-0 text-accent" weight="regular" />
+                      <span className="min-w-0 flex-1 truncate">{file.name}</span>
+                      <span className="shrink-0 font-mono text-[10px] text-muted">
+                        {formatSize(file.size)}
+                      </span>
+                    </button>
+                  </li>
+                ))}
+              </ul>
+            </div>
+          )}
           {files.length > 0 && (
             <ul className="mb-2.5 flex flex-wrap gap-2">
               {files.map((file, index) => (
@@ -291,10 +389,19 @@ export function AiAssist() {
               rows={1}
               value={draft}
               onChange={(event) => {
-                setDraft(event.target.value);
+                const value = event.target.value;
+                setDraft(value);
+                updateMention(value, event.target.selectionStart ?? value.length);
                 resizeTextarea();
               }}
               onKeyDown={onTextareaKeyDown}
+              onKeyUp={(event) =>
+                updateMention(event.currentTarget.value, event.currentTarget.selectionStart ?? 0)
+              }
+              onClick={(event) =>
+                updateMention(event.currentTarget.value, event.currentTarget.selectionStart ?? 0)
+              }
+              onBlur={() => setMentionQuery(null)}
               placeholder="Ask about your documents..."
               className="max-h-36 min-h-10 flex-1 resize-none bg-transparent px-1.5 py-2 text-[14px] leading-relaxed text-ink outline-none placeholder:text-muted"
             />
@@ -308,6 +415,12 @@ export function AiAssist() {
               <ArrowUp size={18} weight="bold" />
             </button>
           </div>
+
+          {files.length > 0 && (
+            <p className="mt-1.5 px-1.5 text-[11px] text-muted">
+              Type <span className="font-mono text-ink">@</span> to reference an attached file in your question.
+            </p>
+          )}
 
           <input
             ref={inputRef}

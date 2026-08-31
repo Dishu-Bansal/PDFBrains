@@ -84,12 +84,28 @@ export function AiAssist() {
   const inputRef = useRef<HTMLInputElement>(null);
   const composerRef = useRef<HTMLDivElement>(null);
   const endRef = useRef<HTMLDivElement>(null);
+  const listRef = useRef<HTMLUListElement>(null);
+  const selectedItemRef = useRef<HTMLLIElement | null>(null);
 
   const configured = isLlmConfigured();
 
   useEffect(() => {
     endRef.current?.scrollIntoView({ behavior: "smooth", block: "end" });
   }, [messages, typing]);
+
+  // Keep the highlighted file visible inside the mention popup while the
+  // selection moves with the arrow keys.
+  useEffect(() => {
+    const list = listRef.current;
+    const item = selectedItemRef.current;
+    if (!list || !item) return;
+    const top = item.offsetTop - list.offsetTop;
+    if (top < list.scrollTop) {
+      list.scrollTop = top;
+    } else if (top + item.offsetHeight > list.scrollTop + list.clientHeight) {
+      list.scrollTop = top + item.offsetHeight - list.clientHeight;
+    }
+  }, [mentionQuery, mentionIndex, files]);
 
   const addFiles = (list: FileList | null) => {
     if (!list || list.length === 0) return;
@@ -297,12 +313,12 @@ export function AiAssist() {
     if (mentionQuery !== null && mentionResults.length > 0) {
       if (event.key === "ArrowDown") {
         event.preventDefault();
-        setMentionIndex((i) => (i + 1) % mentionResults.length);
+        setMentionIndex((i) => Math.min(i + 1, mentionResults.length - 1));
         return;
       }
       if (event.key === "ArrowUp") {
         event.preventDefault();
-        setMentionIndex((i) => (i - 1 + mentionResults.length) % mentionResults.length);
+        setMentionIndex((i) => Math.max(i - 1, 0));
         return;
       }
       if (event.key === "Enter" || event.key === "Tab") {
@@ -416,9 +432,16 @@ export function AiAssist() {
               <p className="border-b border-line px-3 py-2 text-[11px] font-semibold tracking-wide text-muted">
                 Reference a file
               </p>
-              <ul className="max-h-44 overflow-y-auto p-1" role="listbox" aria-label="Attached files">
+              <ul ref={listRef} className="max-h-44 overflow-y-auto p-1" role="listbox" aria-label="Attached files">
                 {mentionResults.map((file, index) => (
-                  <li key={`${file.name}-${file.size}`} role="option" aria-selected={index === safeMentionIndex}>
+                  <li
+                    key={`${file.name}-${file.size}`}
+                    role="option"
+                    aria-selected={index === safeMentionIndex}
+                    ref={(node) => {
+                      if (index === safeMentionIndex) selectedItemRef.current = node;
+                    }}
+                  >
                     <button
                       type="button"
                       onMouseDown={(event) => event.preventDefault()}

@@ -44,6 +44,9 @@ interface ChatMessage {
   planStepIndex?: number;
   planFinalName?: string;
   planError?: string;
+  /** File info (with page counts) the plan was built from, so follow-up
+   * requests can ask for changes without re-attaching files. */
+  plannerFiles?: PlannerFile[];
 }
 
 const SUGGESTIONS = [
@@ -70,6 +73,23 @@ const nextMessageId = () => {
 function formatSize(bytes: number): string {
   if (bytes < 1024 * 1024) return `${(bytes / 1024).toFixed(0)} KB`;
   return `${(bytes / (1024 * 1024)).toFixed(1)} MB`;
+}
+
+/** File info with page counts, for the planner prompt. */
+async function computePlannerFiles(files: ChatFile[]): Promise<PlannerFile[]> {
+  return Promise.all(
+    files.map(async (file) => {
+      let pages: number | undefined;
+      if (file.name.toLowerCase().endsWith(".pdf")) {
+        try {
+          pages = await pdfPageCount(file.file);
+        } catch {
+          pages = undefined;
+        }
+      }
+      return { name: file.name, pages };
+    })
+  );
 }
 
 function unconfiguredReply(text: string, files: ChatFile[]): string {
@@ -170,6 +190,13 @@ export function AiAssist() {
     const attach = attached ?? files;
     if ((!content && attach.length === 0) || typing) return;
 
+    // If the conversation already has a plan, keep routing follow-ups through
+    // the planner (the user is iterating on the same files), even when they
+    // do not re-attach them.
+    const lastPlan = [...messages].reverse().find((m) => m.kind === "plan");
+    const usePlanner = attach.length > 0 || !!lastPlan;
+    const planFiles = attach.length > 0 ? attach : lastPlan?.files ?? [];
+
     const userMessage: ChatMessage = {
       id: nextMessageId(),
       role: "user",
@@ -196,22 +223,10 @@ export function AiAssist() {
     }
 
     try {
-      if (attach.length > 0) {
-        // Files attached: ask the LLM for a JSON-only operation plan. Page
-        // counts help it pick sensible split sizes and organize groups.
-        const fileInfos: PlannerFile[] = await Promise.all(
-          attach.map(async (file) => {
-            let pages: number | undefined;
-            if (file.name.toLowerCase().endsWith(".pdf")) {
-              try {
-                pages = await pdfPageCount(file.file);
-              } catch {
-                pages = undefined;
-              }
-            }
-            return { name: file.name, pages };
-          })
-        );
+      if (usePlanner) {
+        // Ask the LLM for a JSON-only operation plan. Page counts help it
+        // pick sensible split sizes and organize groups.
+        const fileInfos = await computePlannerFiles(planFiles);
         const steps = await runLlmPlan(content, fileInfos);
         setTyping(false);
         appendMessage({
@@ -219,10 +234,11 @@ export function AiAssist() {
           role: "assistant",
           kind: "plan",
           text: "",
-          files: attach,
+          files: planFiles,
           steps,
           planStatus: "pending",
           planStepIndex: 0,
+          plannerFiles: fileInfos,
         });
       } else {
         const result = await runLlmChat(toLlmHistory(messages).slice(-20), {
@@ -246,13 +262,13 @@ export function AiAssist() {
           id: nextMessageId(),
           role: "assistant",
           text: err.content,
-          files: attach,
+          files: planFiles,
           reasoningContent: err.reasoningContent,
         });
         return;
       }
       const detail = err instanceof Error ? err.message : "The AI request failed. Please try again.";
-      appendMessage({ id: nextMessageId(), role: "assistant", text: detail, files: attach, error: true });
+      appendMessage({ id: nextMessageId(), role: "assistant", text: detail, files: planFiles, error: true });
     }
   };
 

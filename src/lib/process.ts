@@ -67,7 +67,10 @@ export interface OrganizePlanEntry {
   pageNumber: number;
 }
 
-export async function mergeSelectedPages(files: File[], plan: OrganizePlanEntry[]): Promise<Blob> {
+export async function mergeSelectedPages(
+  files: (File | Blob)[],
+  plan: OrganizePlanEntry[]
+): Promise<Blob> {
   if (files.length === 0 || plan.length === 0) throw new Error("nothing to build");
   const sources = await Promise.all(files.map((file) => load(file)));
   const out = await PDFDocument.create();
@@ -78,9 +81,15 @@ export async function mergeSelectedPages(files: File[], plan: OrganizePlanEntry[
   return save(out);
 }
 
+/** Page count of a PDF blob. */
+export async function pdfPageCount(file: File | Blob): Promise<number> {
+  const doc = await load(file);
+  return doc.getPageCount();
+}
+
 /** Split into groups: each group is an array of 1-based page numbers that
  * becomes its own PDF. Empty groups are skipped. */
-export async function splitIntoGroups(file: File, groups: number[][]): Promise<Blob[]> {
+export async function splitIntoGroups(file: File | Blob, groups: number[][]): Promise<Blob[]> {
   const src = await load(file);
   const blobs: Blob[] = [];
   for (const group of groups) {
@@ -99,7 +108,7 @@ export async function splitIntoGroups(file: File, groups: number[][]): Promise<B
  * candidate is actually built and measured so the real output stays under
  * the limit. A single oversized page becomes its own file.
  */
-export async function splitBySize(file: File, targetBytes: number): Promise<Blob[]> {
+export async function splitBySize(file: File | Blob, targetBytes: number): Promise<Blob[]> {
   const src = await load(file);
   const n = src.getPageCount();
   const avg = file.size / n;

@@ -5,11 +5,25 @@
 import type { LlmMessage, LlmTool } from "./types";
 import { getLlmProvider } from "./index";
 import { registerPdfTools } from "./pdfTools";
-import { deletePages, extractPages, mergePdfBlobs } from "../process";
+import {
+  deletePages,
+  extractPages,
+  mergePdfBlobs,
+  mergeSelectedPages,
+  pdfPageCount,
+  splitBySize,
+  splitIntoGroups,
+  zipBlobs,
+} from "../process";
 
 registerPdfTools();
 
-export type PlanToolName = "merge-pdf" | "extract-pages" | "remove-pages";
+export type PlanToolName =
+  | "merge-pdf"
+  | "extract-pages"
+  | "remove-pages"
+  | "split-pdf"
+  | "organize-pdf";
 
 /** Thrown when the model replies without calling create_plan. Carries the
  * model's text so the caller can show it as a regular chat reply. */
@@ -29,12 +43,23 @@ export interface PlanStep {
     files?: string[];
     file?: string;
     pages?: number[];
+    groups?: number[][];
+    every?: number;
+    sizeMB?: number;
+    outputPrefix?: string;
+    order?: { file: string; page: number }[];
   };
   outputFile: string;
   description: string;
 }
 
-const PLAN_TOOLS: PlanToolName[] = ["merge-pdf", "extract-pages", "remove-pages"];
+const PLAN_TOOLS: PlanToolName[] = [
+  "merge-pdf",
+  "extract-pages",
+  "remove-pages",
+  "split-pdf",
+  "organize-pdf",
+];
 
 function plannerPrompt(fileNames: string[]): string {
   return [
@@ -46,11 +71,15 @@ function plannerPrompt(fileNames: string[]): string {
     "- merge-pdf: merge multiple PDFs into one, in order (params: files: string[]).",
     "- extract-pages: extract 1-based pages from a PDF into a new PDF (params: file, pages: number[]).",
     "- remove-pages: remove 1-based pages from a PDF, keeping the rest (params: file, pages: number[]).",
+    "- split-pdf: split a PDF into parts and package them as a ZIP (params: file, and one of groups: number[][], every: integer, sizeMB: number; optional outputPrefix). Parts are named <outputPrefix>_1.pdf, <outputPrefix>_2.pdf, ... and the ZIP is saved under outputFile.",
+    "- organize-pdf: build a new PDF from pages across files (params: files: string[], order: [{file, page}]).",
     "",
     "Plan the steps in dependency order. A step may use, as input, an attached",
-    "file or a file produced by an earlier step (by its outputFile name).",
-    "Every step must set a unique outputFile name (ending in .pdf) and a short",
-    "human-readable description shown to the user for confirmation.",
+    "file or a file produced by an earlier step (by its outputFile name, or a",
+    "split part name like <outputPrefix>_2.pdf).",
+    "Every step must set a unique outputFile name (ending in .pdf, or .zip for",
+    "a split) and a short human-readable description shown to the user for",
+    "confirmation.",
     "",
     "Respond with ONLY the JSON plan via the create_plan tool. No prose.",
   ].join("\n");
@@ -91,11 +120,44 @@ function createPlanTool(): LlmTool {
                     },
                     required: ["file", "pages"],
                   },
+                  {
+                    type: "object",
+                    description:
+                      "For split-pdf: input file and exactly one of groups, every or sizeMB.",
+                    properties: {
+                      file: { type: "string" },
+                      groups: { type: "array", items: { type: "array", items: { type: "integer" } } },
+                      every: { type: "integer" },
+                      sizeMB: { type: "number" },
+                      outputPrefix: { type: "string" },
+                    },
+                    required: ["file"],
+                  },
+                  {
+                    type: "object",
+                    description: "For organize-pdf: input files and the output page order.",
+                    properties: {
+                      files: { type: "array", items: { type: "string" } },
+                      order: {
+                        type: "array",
+                        items: {
+                          type: "object",
+                          properties: {
+                            file: { type: "string" },
+                            page: { type: "integer" },
+                          },
+                          required: ["file", "page"],
+                        },
+                      },
+                    },
+                    required: ["files", "order"],
+                  },
                 ],
               },
               outputFile: {
                 type: "string",
-                description: "Output file name, ending in .pdf. Must be unique across the plan.",
+                description:
+                  "Output file name: ends with .pdf, or .zip for a split step. Must be unique across the plan.",
               },
               description: {
                 type: "string",
@@ -163,7 +225,16 @@ function validatePlan(raw: unknown): PlanStep[] {
     }
     const step = item as {
       tool?: unknown;
-      params?: { files?: unknown; file?: unknown; pages?: unknown };
+      params?: {
+        files?: unknown;
+        file?: unknown;
+        pages?: unknown;
+        groups?: unknown;
+        every?: unknown;
+        sizeMB?: unknown;
+        outputPrefix?: unknown;
+        order?: unknown;
+      };
       outputFile?: unknown;
       description?: unknown;
     };
@@ -193,7 +264,7 @@ function validatePlan(raw: unknown): PlanStep[] {
         throw new Error("A merge step has no input files.");
       }
       steps.push({ tool, params: { files }, outputFile, description });
-    } else {
+    } else if (tool === "extract-pages" || tool === "remove-pages") {
       const file = typeof params.file === "string" ? params.file : "";
       const pages = Array.isArray(params.pages)
         ? params.pages.map(Number).filter((n) => Number.isInteger(n) && n >= 1)
@@ -205,6 +276,68 @@ function validatePlan(raw: unknown): PlanStep[] {
         throw new Error(`A ${tool} step has no pages.`);
       }
       steps.push({ tool, params: { file, pages }, outputFile, description });
+    } else if (tool === "split-pdf") {
+      const file = typeof params.file === "string" ? params.file : "";
+      if (!file) {
+        throw new Error("A split step is missing its input file.");
+      }
+      const groups = Array.isArray(params.groups)
+        ? params.groups
+            .map((group) =>
+              Array.isArray(group)
+                ? group.map(Number).filter((n) => Number.isInteger(n) && n >= 1)
+                : []
+            )
+            .filter((group) => group.length > 0)
+        : [];
+      const every =
+        typeof params.every === "number" && Number.isInteger(params.every) && params.every >= 1
+          ? params.every
+          : undefined;
+      const sizeMB =
+        typeof params.sizeMB === "number" && params.sizeMB > 0 && Number.isFinite(params.sizeMB)
+          ? params.sizeMB
+          : undefined;
+      const modeCount = [groups.length > 0, every !== undefined, sizeMB !== undefined].filter(Boolean).length;
+      if (modeCount !== 1) {
+        throw new Error(
+          "A split step needs exactly one of groups, every or sizeMB (found none or several)."
+        );
+      }
+      const outputPrefix =
+        typeof params.outputPrefix === "string" && params.outputPrefix.trim()
+          ? params.outputPrefix.trim()
+          : undefined;
+      steps.push({ tool, params: { file, groups, every, sizeMB, outputPrefix }, outputFile, description });
+    } else if (tool === "organize-pdf") {
+      const files = Array.isArray(params.files)
+        ? params.files.filter((name): name is string => typeof name === "string")
+        : [];
+      const order = Array.isArray(params.order)
+        ? params.order
+            .map((entry) => {
+              if (!entry || typeof entry !== "object") return null;
+              const e = entry as { file?: unknown; page?: unknown };
+              const file = typeof e.file === "string" ? e.file : "";
+              const page = typeof e.page === "number" && Number.isInteger(e.page) && e.page >= 1 ? e.page : null;
+              return file && page !== null ? { file, page } : null;
+            })
+            .filter((entry): entry is { file: string; page: number } => entry !== null)
+        : [];
+      if (files.length === 0) {
+        throw new Error("An organize step has no input files.");
+      }
+      if (order.length === 0) {
+        throw new Error("An organize step has an empty page order.");
+      }
+      for (const entry of order) {
+        if (!files.includes(entry.file)) {
+          throw new Error(`An organize step references unknown file "${entry.file}".`);
+        }
+      }
+      steps.push({ tool, params: { files, order }, outputFile, description });
+    } else {
+      throw new Error(`Unknown tool in the plan: ${tool}.`);
     }
   }
   return steps;
@@ -257,6 +390,48 @@ async function runStep(step: PlanStep, workspace: Map<string, Blob>): Promise<Bl
   }
   if (step.tool === "remove-pages") {
     return deletePages(resolve(step.params.file ?? ""), step.params.pages ?? []);
+  }
+  if (step.tool === "split-pdf") {
+    const source = resolve(step.params.file ?? "");
+    const prefix =
+      step.params.outputPrefix?.trim() ||
+      step.outputFile.replace(/\.zip$/i, "").replace(/\.pdf$/i, "");
+    let parts: Blob[];
+    if (step.params.groups?.length) {
+      parts = await splitIntoGroups(source, step.params.groups);
+    } else if (step.params.every) {
+      const count = await pdfPageCount(source);
+      const groups: number[][] = [];
+      for (let start = 1; start <= count; start += step.params.every) {
+        const end = Math.min(start + step.params.every - 1, count);
+        const group: number[] = [];
+        for (let page = start; page <= end; page++) group.push(page);
+        groups.push(group);
+      }
+      parts = await splitIntoGroups(source, groups);
+    } else if (step.params.sizeMB) {
+      parts = await splitBySize(source, step.params.sizeMB * 1024 * 1024);
+    } else {
+      throw new Error("A split step needs groups, every or sizeMB.");
+    }
+    // Register every part so later steps can reference them by name, then
+    // package the parts into the ZIP that this step outputs.
+    parts.forEach((part, index) => {
+      workspace.set(`${prefix}_${index + 1}.pdf`, part);
+    });
+    return zipBlobs(parts.map((part, index) => ({ name: `${prefix}_${index + 1}.pdf`, blob: part })));
+  }
+  if (step.tool === "organize-pdf") {
+    const names = step.params.files ?? [];
+    const sources = names.map(resolve);
+    const order = (step.params.order ?? []).map((entry) => {
+      const fileIndex = names.indexOf(entry.file);
+      if (fileIndex < 0) {
+        throw new Error(`An organize step references unknown file "${entry.file}".`);
+      }
+      return { fileIndex, pageNumber: entry.page };
+    });
+    return mergeSelectedPages(sources, order);
   }
   throw new Error(`Unknown tool "${step.tool}".`);
 }

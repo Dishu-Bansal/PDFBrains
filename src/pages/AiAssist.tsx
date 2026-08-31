@@ -767,6 +767,8 @@ const TOOL_LABELS: Record<PlanStep["tool"], string> = {
   "merge-pdf": "Merge",
   "extract-pages": "Extract",
   "remove-pages": "Remove",
+  "split-pdf": "Split",
+  "organize-pdf": "Organize",
 };
 
 /** The LLM's operation plan, shown to the user for confirmation, then run. */

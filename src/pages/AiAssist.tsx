@@ -1,19 +1,28 @@
-import { ArrowUp, FilePdf, Paperclip, Sparkle, X } from "@phosphor-icons/react";
+import {
+  ArrowUp,
+  FilePdf,
+  Paperclip,
+  Sparkle,
+  SpinnerGap,
+  WarningCircle,
+  X,
+} from "@phosphor-icons/react";
 import { useEffect, useRef, useState } from "react";
 import type { DragEvent, KeyboardEvent } from "react";
 
 import { Nav } from "../components/Nav";
-
-interface ChatFile {
-  name: string;
-  size: number;
-}
+import { isLlmConfigured } from "../lib/llm";
+import { runLlmChat } from "../lib/llm/chat";
+import { extractFileText, fileTextBlock } from "../lib/llm/fileText";
+import type { IndexedFile } from "../lib/llm/fileText";
+import type { LlmMessage } from "../lib/llm/types";
 
 interface ChatMessage {
   id: number;
   role: "user" | "assistant";
   text: string;
-  files: ChatFile[];
+  files: IndexedFile[];
+  error?: boolean;
 }
 
 const SUGGESTIONS = [
@@ -22,6 +31,11 @@ const SUGGESTIONS = [
   "Rewrite this for clarity",
   "What is this document about?",
 ];
+
+const SYSTEM_PROMPT =
+  "You are AI Assist inside PDFBrains, a browser PDF tool suite. Users attach " +
+  "documents and ask questions about them. Answer clearly and concisely, and when " +
+  "a tool is available for the request, call it instead of guessing.";
 
 let messageCounter = 0;
 const nextMessageId = () => {
@@ -34,28 +48,32 @@ function formatSize(bytes: number): string {
   return `${(bytes / (1024 * 1024)).toFixed(1)} MB`;
 }
 
-function buildReply(text: string, files: ChatFile[]): string {
+function unconfiguredReply(text: string, files: IndexedFile[]): string {
   if (files.length > 0) {
     const names = files.map((file) => file.name).join(", ");
-    return `I can see ${files.length} file${files.length === 1 ? "" : "s"} attached (${names}). The AI backend is coming next, so this is just the interface for now. Once it lands, I will read your files and answer right here.`;
+    return `I can see ${files.length} file${files.length === 1 ? "" : "s"} attached (${names}), but I'm not connected to the AI backend yet. Add your DeepSeek API key as VITE_DEEPSEEK_API_KEY in .env.local and restart the dev server, then I'll answer for real.`;
   }
-  return `You asked: "${text}". The AI backend is coming next, so this is just the interface for now. Once it lands, I will answer your questions right here.`;
+  return `You asked: "${text}". I'm not connected to the AI backend yet. Add your DeepSeek API key as VITE_DEEPSEEK_API_KEY in .env.local and restart the dev server, then I'll answer for real.`;
 }
 
 /**
  * AI Assist: a chat interface for asking questions about documents. Files are
- * dropped or attached in the composer and travel with each message. Frontend
- * only for now; the AI backend hooks in here later.
+ * dropped or attached in the composer, their text is extracted client-side,
+ * and the conversation runs against the active LLM provider (DeepSeek by
+ * default; swap via VITE_LLM_PROVIDER). Tool calls resolve through the LLM
+ * tool registry, so the ~20 PDF tools can plug in later.
  */
 export function AiAssist() {
   const [messages, setMessages] = useState<ChatMessage[]>([]);
   const [draft, setDraft] = useState("");
-  const [files, setFiles] = useState<ChatFile[]>([]);
+  const [files, setFiles] = useState<IndexedFile[]>([]);
   const [typing, setTyping] = useState(false);
   const [dragging, setDragging] = useState(false);
   const inputRef = useRef<HTMLInputElement>(null);
   const textareaRef = useRef<HTMLTextAreaElement>(null);
   const endRef = useRef<HTMLDivElement>(null);
+
+  const configured = isLlmConfigured();
 
   useEffect(() => {
     endRef.current?.scrollIntoView({ behavior: "smooth", block: "end" });
@@ -63,34 +81,80 @@ export function AiAssist() {
 
   const addFiles = (list: FileList | null) => {
     if (!list || list.length === 0) return;
-    const next = Array.from(list).map((file) => ({ name: file.name, size: file.size }));
-    setFiles((prev) => [...prev, ...next]);
+    const entries = Array.from(list);
+    const pending: IndexedFile[] = entries.map((file) => ({
+      name: file.name,
+      size: file.size,
+      text: "",
+      status: "reading",
+    }));
+    setFiles((prev) => [...prev, ...pending]);
+    pending.forEach(async (entry, index) => {
+      const indexed = await extractFileText(entries[index]);
+      setFiles((prev) => prev.map((f) => (f === entry ? indexed : f)));
+    });
   };
 
   const removeFile = (index: number) => {
     setFiles((prev) => prev.filter((_, i) => i !== index));
   };
 
-  const send = (text?: string, attached?: ChatFile[]) => {
+  const toLlmHistory = (history: ChatMessage[]): LlmMessage[] =>
+    history
+      .filter((message) => !message.error)
+      .map((message) => {
+        if (message.role === "assistant") return { role: "assistant", content: message.text };
+        const blocks = message.files.filter((file) => file.text).map(fileTextBlock);
+        const content = [message.text, ...blocks].filter(Boolean).join("\n\n");
+        return { role: "user", content };
+      });
+
+  const send = async (text?: string, attached?: IndexedFile[]) => {
     const content = (text ?? draft).trim();
     const attach = attached ?? files;
-    if (!content && attach.length === 0) return;
-    setMessages((prev) => [
-      ...prev,
-      { id: nextMessageId(), role: "user", text: content, files: attach },
-    ]);
+    if ((!content && attach.length === 0) || typing) return;
+
+    const userMessage: ChatMessage = {
+      id: nextMessageId(),
+      role: "user",
+      text: content,
+      files: attach,
+    };
+    const history = [...messages, userMessage];
+    setMessages(history);
     setDraft("");
     setFiles([]);
     if (textareaRef.current) textareaRef.current.style.height = "auto";
     setTyping(true);
-    const reply = buildReply(content, attach);
-    window.setTimeout(() => {
+
+    if (!configured) {
+      window.setTimeout(() => {
+        setTyping(false);
+        setMessages((prev) => [
+          ...prev,
+          { id: nextMessageId(), role: "assistant", text: unconfiguredReply(content, attach), files: [] },
+        ]);
+      }, 500);
+      return;
+    }
+
+    try {
+      const result = await runLlmChat(toLlmHistory(history).slice(-20), {
+        systemPrompt: SYSTEM_PROMPT,
+      });
       setTyping(false);
       setMessages((prev) => [
         ...prev,
-        { id: nextMessageId(), role: "assistant", text: reply, files: [] },
+        { id: nextMessageId(), role: "assistant", text: result.content, files: [] },
       ]);
-    }, 750);
+    } catch (err) {
+      setTyping(false);
+      const detail = err instanceof Error ? err.message : "The AI request failed. Please try again.";
+      setMessages((prev) => [
+        ...prev,
+        { id: nextMessageId(), role: "assistant", text: detail, files: [], error: true },
+      ]);
+    }
   };
 
   const onDrop = (event: DragEvent<HTMLDivElement>) => {
@@ -123,6 +187,8 @@ export function AiAssist() {
     requestAnimationFrame(() => textareaRef.current?.focus());
   };
 
+  const filesReading = files.some((file) => file.status === "reading");
+
   return (
     <>
       <Nav />
@@ -135,7 +201,7 @@ export function AiAssist() {
             <div>
               <h1 className="text-2xl font-semibold tracking-tight">AI Assist</h1>
               <p className="mt-0.5 text-[14px] leading-relaxed text-muted">
-                Ask questions about your documents. Files and messages are staged; the AI backend lands next.
+                Ask questions about your documents. Attached files are read and sent along with your message.
               </p>
             </div>
           </div>
@@ -150,9 +216,20 @@ export function AiAssist() {
           )}
         </div>
 
-        <div className="mt-5 min-h-0 flex-1 overflow-y-auto pr-1">
+        {!configured && (
+          <div className="mt-3 flex shrink-0 items-start gap-2.5 rounded-xl border border-line bg-surface px-3.5 py-2.5 text-[12px] leading-relaxed text-muted">
+            <WarningCircle size={16} className="mt-0.5 shrink-0 text-accent" />
+            <span>
+              AI replies are off. Add your DeepSeek API key as{" "}
+              <span className="font-mono text-ink">VITE_DEEPSEEK_API_KEY</span> in{" "}
+              <span className="font-mono text-ink">.env.local</span> and restart the dev server.
+            </span>
+          </div>
+        )}
+
+        <div className="mt-4 min-h-0 flex-1 overflow-y-auto pr-1">
           {messages.length === 0 ? (
-            <WelcomePanel onSuggestion={pickSuggestion} />
+            <WelcomePanel onSuggestion={pickSuggestion} configured={configured} />
           ) : (
             <div className="space-y-4">
               {messages.map((message) => (
@@ -183,9 +260,10 @@ export function AiAssist() {
                   key={`${file.name}-${file.size}`}
                   className="flex items-center gap-2 rounded-full border border-line bg-paper py-1 pl-2.5 pr-1.5"
                 >
-                  <FilePdf size={14} className="shrink-0 text-accent" weight="regular" />
-                  <span className="max-w-[180px] truncate text-[12px]">{file.name}</span>
+                  <FileStatusIcon file={file} />
+                  <span className="max-w-[160px] truncate text-[12px]">{file.name}</span>
                   <span className="font-mono text-[10px] text-muted">{formatSize(file.size)}</span>
+                  <FileStatusHint file={file} />
                   <button
                     type="button"
                     onClick={() => removeFile(index)}
@@ -223,7 +301,7 @@ export function AiAssist() {
             <button
               type="button"
               onClick={() => send()}
-              disabled={!draft.trim() && files.length === 0}
+              disabled={(!draft.trim() && files.length === 0) || typing || filesReading}
               aria-label="Send message"
               className="flex size-10 shrink-0 items-center justify-center rounded-full bg-ink text-paper transition hover:opacity-90 active:scale-95 disabled:cursor-not-allowed disabled:opacity-35"
             >
@@ -249,7 +327,32 @@ export function AiAssist() {
   );
 }
 
-function WelcomePanel({ onSuggestion }: { onSuggestion: (text: string) => void }) {
+function FileStatusIcon({ file }: { file: IndexedFile }) {
+  if (file.status === "reading") {
+    return <SpinnerGap size={14} className="animate-spin text-accent" />;
+  }
+  if (file.status === "unsupported" || file.status === "error") {
+    return <WarningCircle size={14} className="shrink-0 text-danger" />;
+  }
+  return <FilePdf size={14} className="shrink-0 text-accent" weight="regular" />;
+}
+
+function FileStatusHint({ file }: { file: IndexedFile }) {
+  if (file.status === "unsupported") return <span className="text-[10px] text-muted">unsupported type</span>;
+  if (file.status === "error") return <span className="text-[10px] text-danger">failed to read</span>;
+  if (file.status === "indexed" && !file.text) {
+    return <span className="text-[10px] text-muted">no extractable text</span>;
+  }
+  return null;
+}
+
+function WelcomePanel({
+  onSuggestion,
+  configured,
+}: {
+  onSuggestion: (text: string) => void;
+  configured: boolean;
+}) {
   return (
     <div className="flex h-full flex-col items-center justify-center text-center">
       <span className="flex size-14 items-center justify-center rounded-2xl bg-accentsoft text-accent">
@@ -257,8 +360,8 @@ function WelcomePanel({ onSuggestion }: { onSuggestion: (text: string) => void }
       </span>
       <h2 className="mt-4 text-xl font-semibold tracking-tight">Ask anything about your documents</h2>
       <p className="mt-1.5 max-w-[46ch] text-[14px] leading-relaxed text-muted">
-        Drop PDFs, Word files or text into the chat below, then ask questions about them. The AI
-        backend is coming next; for now everything is staged in the conversation.
+        Drop PDFs, Word files or text into the chat below, then ask questions about them. Text is
+        extracted from PDFs right in your browser.
       </p>
       <div className="mt-5 flex flex-wrap items-center justify-center gap-2">
         {SUGGESTIONS.map((suggestion) => (
@@ -272,6 +375,13 @@ function WelcomePanel({ onSuggestion }: { onSuggestion: (text: string) => void }
           </button>
         ))}
       </div>
+      {!configured && (
+        <p className="mt-5 max-w-[46ch] text-[12px] leading-relaxed text-muted">
+          To get real AI replies, add your DeepSeek API key to{" "}
+          <span className="font-mono">.env.local</span> as{" "}
+          <span className="font-mono">VITE_DEEPSEEK_API_KEY</span>.
+        </p>
+      )}
     </div>
   );
 }
@@ -283,7 +393,11 @@ function MessageBubble({ message }: { message: ChatMessage }) {
       <div
         className={[
           "max-w-[78%] rounded-2xl px-4 py-3 text-[14px] leading-relaxed",
-          user ? "rounded-br-md bg-ink text-paper" : "rounded-bl-md border border-line bg-surface",
+          user
+            ? "rounded-br-md bg-ink text-paper"
+            : message.error
+              ? "rounded-bl-md border border-danger/40 bg-surface text-danger"
+              : "rounded-bl-md border border-line bg-surface",
         ].join(" ")}
       >
         {message.text && <p className="whitespace-pre-wrap">{message.text}</p>}
@@ -294,7 +408,7 @@ function MessageBubble({ message }: { message: ChatMessage }) {
                 key={`${file.name}-${file.size}`}
                 className="flex items-center gap-2 rounded-lg bg-paper/15 px-2.5 py-1.5"
               >
-                <FilePdf size={14} className="shrink-0 text-accent" weight="regular" />
+                <FileStatusIcon file={file} />
                 <span className="min-w-0 truncate text-[13px]">{file.name}</span>
                 <span className="ml-auto shrink-0 font-mono text-[11px] opacity-60">
                   {formatSize(file.size)}

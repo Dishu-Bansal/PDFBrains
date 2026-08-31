@@ -18,6 +18,9 @@ export interface LlmMessage {
   toolCallId?: string;
   /** Present on assistant messages that invoked tools. */
   toolCalls?: LlmToolCall[];
+  /** Thinking-mode models (e.g. deepseek-reasoner) require the previous
+   * assistant turn's reasoning text to be passed back on the next request. */
+  reasoningContent?: string;
 }
 
 /** One function the model may call. `parameters` is a JSON Schema object. */
@@ -46,6 +49,9 @@ export interface LlmChatResult {
   toolCalls?: LlmToolCall[];
   usage?: LlmUsage;
   model: string;
+  /** Thinking-mode models return this alongside content; must be echoed back
+   * when the conversation continues. */
+  reasoningContent?: string;
 }
 
 /** What every LLM provider must implement to plug into the app. */

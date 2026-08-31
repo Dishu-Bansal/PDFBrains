@@ -29,11 +29,13 @@ export type PlanToolName =
  * model's text so the caller can show it as a regular chat reply. */
 export class PlanRequestError extends Error {
   content: string;
+  reasoningContent?: string;
 
-  constructor(content: string) {
+  constructor(content: string, reasoningContent?: string) {
     super(content || "The AI did not return a plan. Try rewording the request.");
     this.name = "PlanRequestError";
     this.content = content;
+    this.reasoningContent = reasoningContent;
   }
 }
 
@@ -194,7 +196,7 @@ export async function runLlmPlan(userText: string, fileNames: string[]): Promise
 
   const call = result.toolCalls?.find((c) => c.name === "create_plan");
   if (!call) {
-    throw new PlanRequestError(result.content);
+    throw new PlanRequestError(result.content, result.reasoningContent);
   }
 
   let parsed: unknown;

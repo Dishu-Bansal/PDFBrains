@@ -33,6 +33,7 @@ interface OpenAiMessage {
   role: string;
   content: string;
   tool_call_id?: string;
+  reasoning_content?: string;
   tool_calls?: {
     id: string;
     type: "function";
@@ -49,11 +50,20 @@ function toOpenAiMessages(messages: LlmMessage[]): OpenAiMessage[] {
       return {
         role: "assistant",
         content: message.content,
+        reasoning_content: message.reasoningContent,
         tool_calls: message.toolCalls.map((call: LlmToolCall) => ({
           id: call.id,
           type: "function",
           function: { name: call.name, arguments: call.arguments },
         })),
+      };
+    }
+    if (message.role === "assistant") {
+      // Thinking-mode models need the reasoning echoed back.
+      return {
+        role: "assistant",
+        content: message.content,
+        reasoning_content: message.reasoningContent,
       };
     }
     return { role: message.role, content: message.content };
@@ -133,7 +143,7 @@ export function createDeepSeekProvider(): LlmProvider {
 
       const data = (await response.json()) as {
         model?: string;
-        choices?: { message?: { content?: string | null; tool_calls?: unknown } }[];
+        choices?: { message?: { content?: string | null; reasoning_content?: string | null; tool_calls?: unknown } }[];
         usage?: { prompt_tokens?: number; completion_tokens?: number };
       };
       const choice = data.choices?.[0];
@@ -144,6 +154,7 @@ export function createDeepSeekProvider(): LlmProvider {
       return {
         content: choice.message.content ?? "",
         toolCalls: toToolCalls(choice.message.tool_calls),
+        reasoningContent: choice.message.reasoning_content ?? undefined,
         usage:
           data.usage && data.usage.prompt_tokens !== undefined
             ? {

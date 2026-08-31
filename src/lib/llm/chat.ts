@@ -43,6 +43,7 @@ export async function runLlmChat(
       role: "assistant",
       content: result.content,
       toolCalls: result.toolCalls,
+      reasoningContent: result.reasoningContent,
     });
     for (const call of result.toolCalls) {
       const output = await dispatchTool(call.name, call.arguments);

@@ -36,6 +36,8 @@ interface ChatMessage {
   text: string;
   files: ChatFile[];
   error?: boolean;
+  /** Thinking-mode models require the assistant reasoning echoed back. */
+  reasoningContent?: string;
   /** Plan mode fields. */
   steps?: PlanStep[];
   planStatus?: PlanStatus;
@@ -146,10 +148,14 @@ export function AiAssist() {
 
   const toLlmHistory = (history: ChatMessage[]): LlmMessage[] =>
     history
-      .filter((message) => !message.error)
+      .filter((message) => !message.error && message.kind !== "plan")
       .map((message) =>
         message.role === "assistant"
-          ? { role: "assistant", content: message.text }
+          ? {
+              role: "assistant",
+              content: message.text,
+              reasoningContent: message.reasoningContent,
+            }
           : { role: "user", content: message.text }
       );
 
@@ -209,14 +215,26 @@ export function AiAssist() {
           systemPrompt: SYSTEM_PROMPT,
         });
         setTyping(false);
-        appendMessage({ id: nextMessageId(), role: "assistant", text: result.content, files: [] });
+        appendMessage({
+          id: nextMessageId(),
+          role: "assistant",
+          text: result.content,
+          files: [],
+          reasoningContent: result.reasoningContent,
+        });
       }
     } catch (err) {
       setTyping(false);
       // If the model answered in prose instead of calling create_plan, show
       // its reply as a normal message rather than an error.
       if (err instanceof PlanRequestError && err.content) {
-        appendMessage({ id: nextMessageId(), role: "assistant", text: err.content, files: attach });
+        appendMessage({
+          id: nextMessageId(),
+          role: "assistant",
+          text: err.content,
+          files: attach,
+          reasoningContent: err.reasoningContent,
+        });
         return;
       }
       const detail = err instanceof Error ? err.message : "The AI request failed. Please try again.";

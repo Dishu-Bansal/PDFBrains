@@ -842,6 +842,16 @@ const TOOL_LABELS: Record<PlanStep["tool"], string> = {
   "remove-pages": "Remove",
   "split-pdf": "Split",
   "organize-pdf": "Organize",
+  "word-to-pdf": "To PDF",
+  "powerpoint-to-pdf": "To PDF",
+  "excel-to-pdf": "To PDF",
+  "html-to-pdf": "To PDF",
+  "jpg-to-pdf": "To PDF",
+  "pdf-to-word": "To Word",
+  "pdf-to-powerpoint": "To PPT",
+  "pdf-to-excel": "To Excel",
+  "pdf-to-pdfa": "To PDF/A",
+  "pdf-to-jpg": "To JPG",
 };
 
 /** The LLM's operation plan, shown to the user for confirmation, then run. */

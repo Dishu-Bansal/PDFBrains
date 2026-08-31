@@ -6,8 +6,17 @@ import type { LlmMessage, LlmTool } from "./types";
 import { getLlmProvider } from "./index";
 import { registerPdfTools } from "./pdfTools";
 import {
+  convertHtmlToPdf,
+  convertOfficeToPdf,
+  convertPdfToExcel,
+  convertPdfToPdfa,
+  convertPdfToPowerpoint,
+  convertPdfToWord,
+} from "../api";
+import {
   deletePages,
   extractPages,
+  imagesToPdf,
   mergePdfBlobs,
   mergeSelectedPages,
   pdfPageCount,
@@ -15,6 +24,7 @@ import {
   splitIntoGroups,
   zipBlobs,
 } from "../process";
+import { renderPageToJpeg } from "../pdf";
 
 registerPdfTools();
 
@@ -23,7 +33,17 @@ export type PlanToolName =
   | "extract-pages"
   | "remove-pages"
   | "split-pdf"
-  | "organize-pdf";
+  | "organize-pdf"
+  | "word-to-pdf"
+  | "powerpoint-to-pdf"
+  | "excel-to-pdf"
+  | "html-to-pdf"
+  | "jpg-to-pdf"
+  | "pdf-to-word"
+  | "pdf-to-powerpoint"
+  | "pdf-to-excel"
+  | "pdf-to-pdfa"
+  | "pdf-to-jpg";
 
 /** Thrown when the model replies without calling create_plan. Carries the
  * model's text so the caller can show it as a regular chat reply. */
@@ -50,6 +70,7 @@ export interface PlanStep {
     sizeMB?: number;
     outputPrefix?: string;
     order?: { file: string; page: number }[];
+    outputFormat?: string;
   };
   outputFile: string;
   description: string;
@@ -67,7 +88,30 @@ const PLAN_TOOLS: PlanToolName[] = [
   "remove-pages",
   "split-pdf",
   "organize-pdf",
+  "word-to-pdf",
+  "powerpoint-to-pdf",
+  "excel-to-pdf",
+  "html-to-pdf",
+  "jpg-to-pdf",
+  "pdf-to-word",
+  "pdf-to-powerpoint",
+  "pdf-to-excel",
+  "pdf-to-pdfa",
+  "pdf-to-jpg",
 ];
+
+const OFFICE_TO_PDF = new Set(["word-to-pdf", "powerpoint-to-pdf", "excel-to-pdf", "html-to-pdf"]);
+const PDF_TO_FORMAT = new Set([
+  "pdf-to-word",
+  "pdf-to-powerpoint",
+  "pdf-to-excel",
+  "pdf-to-pdfa",
+  "pdf-to-jpg",
+]);
+
+const WORD_FORMATS = new Set(["doc", "docx", "odt"]);
+const PPT_FORMATS = new Set(["ppt", "pptx", "odp"]);
+const PDFA_FORMATS = new Set(["pdfa1b", "pdfa2b", "pdfa2u", "pdfa3b", "pdfa3u"]);
 
 function plannerPrompt(files: PlannerFile[]): string {
   const fileLines = files.length
@@ -84,6 +128,17 @@ function plannerPrompt(files: PlannerFile[]): string {
     "- merge-pdf: merge whole PDF files into one, in order (params: files: string[]).",
     "- extract-pages: pull specific 1-based pages out of ONE PDF into a new PDF (params: file, pages: number[]).",
     "- remove-pages: delete specific 1-based pages from a PDF, keeping the rest (params: file, pages: number[]).",
+    "- pdf-to-word: convert a PDF to Word (outputFormat doc|docx|odt, default docx; output ends .docx).",
+    "- pdf-to-powerpoint: convert a PDF to PowerPoint (outputFormat ppt|pptx|odp, default pptx; output ends .pptx).",
+    "- pdf-to-excel: convert a PDF to Excel (output ends .xlsx).",
+    "- pdf-to-pdfa: convert a PDF to PDF/A (outputFormat pdfa1b|pdfa2b|pdfa2u|pdfa3b|pdfa3u, default pdfa2b; output ends .pdf).",
+    "- pdf-to-jpg: convert PDF pages to JPG images packaged as a ZIP (params: file, pages?: number[]; default all pages; output ends .zip).",
+    "- word-to-pdf, powerpoint-to-pdf, excel-to-pdf: convert an Office file to PDF (params: file; output ends .pdf).",
+    "- html-to-pdf: convert an HTML file to PDF (params: file; output ends .pdf).",
+    "- jpg-to-pdf: convert images to a PDF, one page per image (params: files: string[]; output ends .pdf).",
+    "Conversions take one input file (a PDF, office, HTML or image file) and",
+    "produce one output file; they can follow local steps (for example extract",
+    "pages, then convert the result to Word).",
     "",
     "Plan the steps in dependency order. A step may use, as input, an attached",
     "file, a file produced by an earlier step (by its outputFile name), or a",
@@ -171,6 +226,25 @@ function createPlanTool(): LlmTool {
                       },
                     },
                     required: ["files", "order"],
+                  },
+                  {
+                    type: "object",
+                    description:
+                      "For all single-file conversions (word/ppt/excel/html-to-pdf, pdf-to-word/powerpoint/excel/pdfa/jpg): input file name; outputFormat optional for pdf-to-word/powerpoint/pdfa; pages optional (1-based) for pdf-to-jpg.",
+                    properties: {
+                      file: { type: "string" },
+                      outputFormat: { type: "string" },
+                      pages: { type: "array", items: { type: "integer" } },
+                    },
+                    required: ["file"],
+                  },
+                  {
+                    type: "object",
+                    description: "For jpg-to-pdf: image file names, one page per image.",
+                    properties: {
+                      files: { type: "array", items: { type: "string" } },
+                    },
+                    required: ["files"],
                   },
                 ],
               },
@@ -261,6 +335,7 @@ function validatePlan(raw: unknown): PlanStep[] {
         sizeMB?: unknown;
         outputPrefix?: unknown;
         order?: unknown;
+        outputFormat?: unknown;
       };
       outputFile?: unknown;
       description?: unknown;
@@ -363,6 +438,42 @@ function validatePlan(raw: unknown): PlanStep[] {
         }
       }
       steps.push({ tool, params: { files, order }, outputFile, description });
+    } else if (OFFICE_TO_PDF.has(tool)) {
+      const file = typeof params.file === "string" ? params.file : "";
+      if (!file) {
+        throw new Error(`A ${tool} step is missing its input file.`);
+      }
+      steps.push({ tool, params: { file }, outputFile, description });
+    } else if (tool === "jpg-to-pdf") {
+      const files = Array.isArray(params.files)
+        ? params.files.filter((name): name is string => typeof name === "string")
+        : [];
+      if (files.length === 0) {
+        throw new Error("A jpg-to-pdf step has no image files.");
+      }
+      steps.push({ tool, params: { files }, outputFile, description });
+    } else if (PDF_TO_FORMAT.has(tool)) {
+      const file = typeof params.file === "string" ? params.file : "";
+      if (!file) {
+        throw new Error(`A ${tool} step is missing its input file.`);
+      }
+      let outputFormat = typeof params.outputFormat === "string" ? params.outputFormat.trim() : "";
+      if (tool === "pdf-to-word" && !WORD_FORMATS.has(outputFormat)) outputFormat = "docx";
+      if (tool === "pdf-to-powerpoint" && !PPT_FORMATS.has(outputFormat)) outputFormat = "pptx";
+      if (tool === "pdf-to-pdfa" && !PDFA_FORMATS.has(outputFormat)) outputFormat = "pdfa2b";
+      if (tool === "pdf-to-excel" || tool === "pdf-to-jpg") outputFormat = "";
+      const pages =
+        tool === "pdf-to-jpg"
+          ? Array.isArray(params.pages)
+            ? params.pages.map(Number).filter((n) => Number.isInteger(n) && n >= 1)
+            : []
+          : undefined;
+      steps.push({
+        tool,
+        params: pages ? { file, pages, outputFormat: outputFormat || undefined } : { file, outputFormat: outputFormat || undefined },
+        outputFile,
+        description,
+      });
     } else {
       throw new Error(`Unknown tool in the plan: ${tool}.`);
     }
@@ -459,6 +570,45 @@ async function runStep(step: PlanStep, workspace: Map<string, Blob>): Promise<Bl
       return { fileIndex, pageNumber: entry.page };
     });
     return mergeSelectedPages(sources, order);
+  }
+
+  // Conversion tools. Backend conversions take a File; wrap the workspace
+  // blob so the multipart upload keeps the input file name.
+  const toFile = (blob: Blob, name: string): File => new File([blob], name);
+  const inputFile = (): File => toFile(resolve(step.params.file ?? ""), step.params.file ?? "input");
+
+  if (OFFICE_TO_PDF.has(step.tool)) {
+    const converted = step.tool === "html-to-pdf" ? convertHtmlToPdf : convertOfficeToPdf;
+    return converted(inputFile());
+  }
+  if (step.tool === "jpg-to-pdf") {
+    return imagesToPdf((step.params.files ?? []).map((name) => toFile(resolve(name), name)));
+  }
+  if (step.tool === "pdf-to-word") {
+    return convertPdfToWord(inputFile(), step.params.outputFormat ?? "docx");
+  }
+  if (step.tool === "pdf-to-powerpoint") {
+    return convertPdfToPowerpoint(inputFile(), step.params.outputFormat ?? "pptx");
+  }
+  if (step.tool === "pdf-to-excel") {
+    return convertPdfToExcel(inputFile());
+  }
+  if (step.tool === "pdf-to-pdfa") {
+    return convertPdfToPdfa(inputFile(), step.params.outputFormat ?? "pdfa2b", false, false);
+  }
+  if (step.tool === "pdf-to-jpg") {
+    const file = inputFile();
+    const count = await pdfPageCount(file);
+    const pages =
+      step.params.pages?.length && step.params.pages.every((p) => p <= count)
+        ? step.params.pages
+        : Array.from({ length: count }, (_, i) => i + 1);
+    const base = (step.params.file ?? "document").replace(/\.[^.]+$/, "");
+    const jpgs: Blob[] = [];
+    for (const page of pages) {
+      jpgs.push(await renderPageToJpeg(file, page));
+    }
+    return zipBlobs(jpgs.map((blob, index) => ({ name: `${base}_page_${pages[index]}.jpg`, blob })));
   }
   throw new Error(`Unknown tool "${step.tool}".`);
 }

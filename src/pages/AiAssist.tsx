@@ -86,6 +86,8 @@ export function AiAssist() {
   const endRef = useRef<HTMLDivElement>(null);
   const listRef = useRef<HTMLUListElement>(null);
   const selectedItemRef = useRef<HTMLLIElement | null>(null);
+  const lastMentionQueryRef = useRef<string | null>(null);
+  const mentionDismissedRef = useRef(false);
 
   const configured = isLlmConfigured();
 
@@ -215,12 +217,27 @@ export function AiAssist() {
     }
     const before = (node.textContent ?? "").slice(0, selection.anchorOffset);
     const match = before.match(/@([^@\n]*)$/);
-    if (match) {
-      setMentionQuery(match[1]);
-      setMentionIndex(0);
-    } else {
+    if (!match) {
+      // No @ run at the caret: a future @ should open the popup again.
+      mentionDismissedRef.current = false;
+      lastMentionQueryRef.current = null;
       setMentionQuery(null);
+      return;
     }
+    if (mentionDismissedRef.current) {
+      // Dismissed with Escape on this @ run; stay closed until the caret
+      // leaves it (typing more filter characters does not reopen it).
+      setMentionQuery(null);
+      return;
+    }
+    const query = match[1];
+    if (lastMentionQueryRef.current !== query) {
+      // Only a real filter change resets the highlight; arrow-key navigation
+      // and caret moves (which fire keyup with the same query) do not.
+      lastMentionQueryRef.current = query;
+      setMentionIndex(0);
+    }
+    setMentionQuery(query);
   };
 
   /** Replaces the pending "@query" run with a chip followed by a caret anchor. */
@@ -329,6 +346,7 @@ export function AiAssist() {
       if (event.key === "Escape") {
         event.preventDefault();
         setMentionQuery(null);
+        mentionDismissedRef.current = true;
         return;
       }
     }

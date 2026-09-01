@@ -573,8 +573,11 @@ async function runStep(step: PlanStep, workspace: Map<string, Blob>): Promise<Bl
   }
 
   // Conversion tools. Backend conversions take a File; wrap the workspace
-  // blob so the multipart upload keeps the input file name.
-  const toFile = (blob: Blob, name: string): File => new File([blob], name);
+  // blob so the multipart upload keeps the input file name AND its content
+  // type (Stirling rejects PDF conversions whose upload is not
+  // application/pdf).
+  const toFile = (blob: Blob, name: string): File =>
+    new File([blob], name, { type: blob.type || "application/pdf" });
   const inputFile = (): File => toFile(resolve(step.params.file ?? ""), step.params.file ?? "input");
 
   if (OFFICE_TO_PDF.has(step.tool)) {

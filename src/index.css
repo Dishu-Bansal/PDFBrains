@@ -102,3 +102,28 @@ html[data-theme="dark"] {
     }
   }
 }
+
+/* AI Assist composer: empty-state placeholder and @-mention chips. */
+[contenteditable][data-placeholder]:empty::before {
+  content: attr(data-placeholder);
+  color: var(--color-muted);
+  pointer-events: none;
+}
+
+.mention-chip {
+  display: inline-flex;
+  align-items: center;
+  max-width: 220px;
+  vertical-align: baseline;
+  border-radius: 9999px;
+  padding: 1px 8px;
+  font-size: 13px;
+  font-weight: 500;
+  color: var(--accent-strong);
+  background: var(--accent-soft);
+  cursor: default;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+

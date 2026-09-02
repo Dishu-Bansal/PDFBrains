@@ -1,4 +1,4 @@
-import { CaretDown, List, X } from "@phosphor-icons/react";
+import { CaretDown, List, Sparkle, X } from "@phosphor-icons/react";
 import { useEffect, useRef, useState } from "react";
 import type { ReactNode } from "react";
 import { Link, useLocation } from "react-router-dom";
@@ -85,6 +85,13 @@ export function Nav() {
       <nav className="mx-auto flex h-16 max-w-[1400px] items-center justify-between gap-3 px-4 sm:px-6 lg:px-8">
         <div className="flex min-w-0 items-center gap-4">
           <Logo />
+          <Link
+            to="/ai-assist"
+            className="inline-flex h-9 shrink-0 items-center gap-1.5 rounded-full border border-accent bg-accentsoft px-4 text-[14px] font-medium text-accentstrong transition hover:bg-accent/15 active:scale-[0.97]"
+          >
+            <Sparkle size={15} weight="bold" />
+            AI Assist
+          </Link>
           <div className="hidden items-center gap-1.5 lg:flex">
             {quickTools.map((tool) => (
               <Link
@@ -167,7 +174,16 @@ export function Nav() {
       {mobileOpen && (
         <div className="max-h-[calc(100dvh-4rem)] overflow-y-auto border-t border-line bg-paper lg:hidden">
           <div className="mx-auto max-w-[1400px] px-4 py-4 sm:px-6">
-            <div className="flex flex-wrap gap-2">
+            <Link
+              to="/ai-assist"
+              onClick={closeMenus}
+              className="inline-flex h-10 items-center gap-1.5 rounded-full border border-accent bg-accentsoft px-5 text-[14px] font-medium text-accentstrong"
+            >
+              <Sparkle size={15} weight="bold" />
+              AI Assist
+            </Link>
+
+            <div className="mt-4 flex flex-wrap gap-2">
               {quickTools.map((tool) => (
                 <Link
                   key={tool.slug}

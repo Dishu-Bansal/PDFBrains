@@ -52,6 +52,12 @@ export interface Tool {
   multiFile: boolean;
   /** File input accept hint. */
   accept?: string;
+  /**
+   * True while the tool's processing is not implemented yet. It stays in the
+   * catalog but is shown disabled with an "Upcoming" tag and has no runnable
+   * workspace.
+   */
+  upcoming?: boolean;
 }
 
 /**
@@ -94,14 +100,14 @@ export const TOOLS: Tool[] = [
   { slug: "add-watermark", name: "Add watermark", tagline: "Stamp text onto every page.", category: "Edit", Icon: Stamp, workspace: "document", multiFile: false, accept: "application/pdf" },
   { slug: "crop-pdf", name: "Crop PDF", tagline: "Trim the margins of every page.", category: "Edit", Icon: Crop, workspace: "pages", multiFile: false, accept: "application/pdf" },
   { slug: "edit-pdf", name: "Edit PDF", tagline: "Change text and annotations in place.", category: "Edit", Icon: PencilSimple, workspace: "pages", multiFile: false, accept: "application/pdf" },
-  { slug: "pdf-forms", name: "PDF Forms", tagline: "Fill in and sign form fields.", category: "Edit", Icon: Textbox, workspace: "pages", multiFile: false, accept: "application/pdf" },
+  { slug: "pdf-forms", name: "PDF Forms", tagline: "Fill in and sign form fields.", category: "Edit", Icon: Textbox, workspace: "pages", multiFile: false, accept: "application/pdf", upcoming: true },
 
   // PDF Security
   { slug: "unlock-pdf", name: "Unlock PDF", tagline: "Remove a password you know.", category: "PDF Security", Icon: LockSimpleOpen, workspace: "document", multiFile: false, accept: "application/pdf" },
   { slug: "protect-pdf", name: "Protect PDF", tagline: "Lock a file with a password.", category: "PDF Security", Icon: LockSimple, workspace: "document", multiFile: false, accept: "application/pdf" },
-  { slug: "sign-pdf", name: "Sign PDF", tagline: "Add a signature and send it on.", category: "PDF Security", Icon: Signature, workspace: "document", multiFile: false, accept: "application/pdf" },
-  { slug: "redact-pdf", name: "Redact PDF", tagline: "Black out sensitive text permanently.", category: "PDF Security", Icon: EyeSlash, workspace: "document", multiFile: false, accept: "application/pdf" },
-  { slug: "compare-pdf", name: "Compare PDF", tagline: "Spot the differences between two files.", category: "PDF Security", Icon: Scales, workspace: "document", multiFile: true, accept: "application/pdf" },
+  { slug: "sign-pdf", name: "Sign PDF", tagline: "Add a signature and send it on.", category: "PDF Security", Icon: Signature, workspace: "document", multiFile: false, accept: "application/pdf", upcoming: true },
+  { slug: "redact-pdf", name: "Redact PDF", tagline: "Black out sensitive text permanently.", category: "PDF Security", Icon: EyeSlash, workspace: "document", multiFile: false, accept: "application/pdf", upcoming: true },
+  { slug: "compare-pdf", name: "Compare PDF", tagline: "Spot the differences between two files.", category: "PDF Security", Icon: Scales, workspace: "document", multiFile: true, accept: "application/pdf", upcoming: true },
 ];
 
 export const CATEGORIES: Category[] = [

@@ -852,6 +852,9 @@ const TOOL_LABELS: Record<PlanStep["tool"], string> = {
   "pdf-to-excel": "To Excel",
   "pdf-to-pdfa": "To PDF/A",
   "pdf-to-jpg": "To JPG",
+  "compress-pdf": "Compress",
+  "repair-pdf": "Repair",
+  "ocr-pdf": "OCR",
 };
 
 /** The LLM's operation plan, shown to the user for confirmation, then run. */

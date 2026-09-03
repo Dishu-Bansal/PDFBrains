@@ -83,16 +83,16 @@ export function Catalog() {
                             {tool.upcoming ? (
                               <div
                                 aria-disabled="true"
-                                className="flex cursor-default items-center gap-3 rounded-2xl p-2.5 select-none"
+                                className="flex cursor-not-allowed items-center gap-3 rounded-2xl border border-line/70 bg-raised/90 p-2.5 select-none"
                               >
-                                <span className="flex size-9 shrink-0 items-center justify-center rounded-[10px] bg-accentsoft/60 text-accent/70">
+                                <span className="flex size-9 shrink-0 items-center justify-center rounded-[10px] bg-paper text-muted/70">
                                   <tool.Icon size={19} weight="regular" />
                                 </span>
                                 <span className="min-w-0 flex-1">
-                                  <span className="block truncate text-[15px] font-medium leading-tight">
+                                  <span className="block truncate text-[15px] font-medium leading-tight text-muted/80">
                                     {tool.name}
                                   </span>
-                                  <span className="block truncate text-[13px] leading-snug text-muted">
+                                  <span className="block truncate text-[13px] leading-snug text-muted/60">
                                     {tool.tagline}
                                   </span>
                                 </span>

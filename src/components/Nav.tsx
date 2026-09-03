@@ -25,7 +25,7 @@ function DropdownLink({
     return (
       <span
         aria-disabled="true"
-        className="flex cursor-default items-center justify-between gap-2 rounded-lg px-2.5 py-1.5 text-[13px] text-muted select-none"
+        className="flex cursor-not-allowed items-center justify-between gap-2 rounded-lg border border-line/60 bg-raised/80 px-2.5 py-1.5 text-[13px] text-muted/80 select-none"
       >
         <span className="truncate">{tool.name}</span>
         <UpcomingTag />
@@ -218,7 +218,7 @@ export function Nav() {
                       <span
                         key={tool.slug}
                         aria-disabled="true"
-                        className="inline-flex cursor-default items-center gap-1.5 rounded-full border border-dashed border-linestrong bg-surface py-1 pl-3 pr-1.5 text-[13px] text-muted select-none"
+                        className="inline-flex cursor-not-allowed items-center gap-2 rounded-full bg-raised/80 py-1 pl-3 pr-1.5 text-[13px] text-muted/80 select-none"
                       >
                         <span className="truncate">{tool.name}</span>
                         <UpcomingTag />

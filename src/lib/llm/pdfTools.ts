@@ -127,6 +127,37 @@ const imageListParams = {
   required: ["files"],
 };
 
+const pdfFileParams = {
+  type: "object",
+  properties: {
+    file: {
+      type: "string",
+      description:
+        "Input PDF file name: an attached file or a file produced by an earlier plan step.",
+    },
+  },
+  required: ["file"],
+};
+
+const optimizeParams = {
+  type: "object",
+  properties: {
+    file: {
+      type: "string",
+      description:
+        "Input PDF file name: an attached file or a file produced by an earlier plan step.",
+    },
+    optimizeLevel: {
+      type: "integer",
+      minimum: 0,
+      maximum: 10,
+      description:
+        "Optional compression level for compress-pdf (0-10, default 5); higher values shrink image-heavy files more.",
+    },
+  },
+  required: ["file"],
+};
+
 let registered = false;
 
 /** Registers the PDF operation tools once. Safe to call repeatedly. */
@@ -176,6 +207,35 @@ export function registerPdfTools(): void {
       description:
         "Build a new PDF from pages selected across multiple input files, in the given order.",
       parameters: organizeParams,
+    },
+    handler
+  );
+
+  // Backend PDF optimization tools.
+  registerTool(
+    "compress-pdf",
+    {
+      description:
+        "Shrink a PDF's file size (params: file, optimizeLevel 0-10 optional default 5; output ends in .pdf).",
+      parameters: optimizeParams,
+    },
+    handler
+  );
+  registerTool(
+    "repair-pdf",
+    {
+      description:
+        "Rebuild a broken or damaged PDF (Ghostscript + qpdf; params: file; output ends in .pdf).",
+      parameters: pdfFileParams,
+    },
+    handler
+  );
+  registerTool(
+    "ocr-pdf",
+    {
+      description:
+        "Add an English text layer to scanned pages with OCR (params: file; output ends in .pdf).",
+      parameters: pdfFileParams,
     },
     handler
   );

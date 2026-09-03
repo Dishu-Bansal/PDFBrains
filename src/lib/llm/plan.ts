@@ -6,12 +6,15 @@ import type { LlmMessage, LlmTool } from "./types";
 import { getLlmProvider } from "./index";
 import { registerPdfTools } from "./pdfTools";
 import {
+  compressPdfViaApi,
   convertHtmlToPdf,
   convertOfficeToPdf,
   convertPdfToExcel,
   convertPdfToPdfa,
   convertPdfToPowerpoint,
   convertPdfToWord,
+  ocrPdfViaApi,
+  repairPdfViaApi,
 } from "../api";
 import {
   deletePages,
@@ -43,7 +46,10 @@ export type PlanToolName =
   | "pdf-to-powerpoint"
   | "pdf-to-excel"
   | "pdf-to-pdfa"
-  | "pdf-to-jpg";
+  | "pdf-to-jpg"
+  | "compress-pdf"
+  | "repair-pdf"
+  | "ocr-pdf";
 
 /** Thrown when the model replies without calling create_plan. Carries the
  * model's text so the caller can show it as a regular chat reply. */
@@ -71,6 +77,8 @@ export interface PlanStep {
     outputPrefix?: string;
     order?: { file: string; page: number }[];
     outputFormat?: string;
+    /** compress-pdf only: 0-10, defaults to 5. */
+    optimizeLevel?: number;
   };
   outputFile: string;
   description: string;
@@ -98,6 +106,9 @@ const PLAN_TOOLS: PlanToolName[] = [
   "pdf-to-excel",
   "pdf-to-pdfa",
   "pdf-to-jpg",
+  "compress-pdf",
+  "repair-pdf",
+  "ocr-pdf",
 ];
 
 const OFFICE_TO_PDF = new Set(["word-to-pdf", "powerpoint-to-pdf", "excel-to-pdf", "html-to-pdf"]);
@@ -133,12 +144,15 @@ function plannerPrompt(files: PlannerFile[]): string {
     "- pdf-to-excel: convert a PDF to Excel (output ends .xlsx).",
     "- pdf-to-pdfa: convert a PDF to PDF/A (outputFormat pdfa1b|pdfa2b|pdfa2u|pdfa3b|pdfa3u, default pdfa2b; output ends .pdf).",
     "- pdf-to-jpg: convert PDF pages to JPG images packaged as a ZIP (params: file, pages?: number[]; default all pages; output ends .zip).",
+    "- compress-pdf: shrink a PDF's file size (params: file, optimizeLevel 0-10 optional, default 5; output ends .pdf). Set optimizeLevel to 9 when the user asks for maximum or strongest compression; omit it otherwise.",
+    "- repair-pdf: rebuild a broken or damaged PDF (params: file; output ends .pdf).",
+    "- ocr-pdf: add an English text layer to scanned or image-based pages (params: file; output ends .pdf).",
     "- word-to-pdf, powerpoint-to-pdf, excel-to-pdf: convert an Office file to PDF (params: file; output ends .pdf).",
     "- html-to-pdf: convert an HTML file to PDF (params: file; output ends .pdf).",
     "- jpg-to-pdf: convert images to a PDF, one page per image (params: files: string[]; output ends .pdf).",
-    "Conversions take one input file (a PDF, office, HTML or image file) and",
-    "produce one output file; they can follow local steps (for example extract",
-    "pages, then convert the result to Word).",
+    "Conversions, compress, repair and OCR take one input file (a PDF, office,",
+    "HTML or image file) and produce one output file; they can follow local",
+    "steps (for example extract pages, then convert the result to Word).",
     "",
     "Plan the steps in dependency order. A step may use, as input, an attached",
     "file, a file produced by an earlier step (by its outputFile name), or a",
@@ -240,6 +254,16 @@ function createPlanTool(): LlmTool {
                   },
                   {
                     type: "object",
+                    description:
+                      "For compress-pdf, repair-pdf and ocr-pdf: one input PDF file; compress-pdf accepts an optional optimizeLevel (0-10, default 5).",
+                    properties: {
+                      file: { type: "string" },
+                      optimizeLevel: { type: "integer" },
+                    },
+                    required: ["file"],
+                  },
+                  {
+                    type: "object",
                     description: "For jpg-to-pdf: image file names, one page per image.",
                     properties: {
                       files: { type: "array", items: { type: "string" } },
@@ -336,6 +360,7 @@ function validatePlan(raw: unknown): PlanStep[] {
         outputPrefix?: unknown;
         order?: unknown;
         outputFormat?: unknown;
+        optimizeLevel?: unknown;
       };
       outputFile?: unknown;
       description?: unknown;
@@ -474,6 +499,25 @@ function validatePlan(raw: unknown): PlanStep[] {
         outputFile,
         description,
       });
+    } else if (tool === "compress-pdf" || tool === "repair-pdf" || tool === "ocr-pdf") {
+      const file = typeof params.file === "string" ? params.file : "";
+      if (!file) {
+        throw new Error(`A ${tool} step is missing its input file.`);
+      }
+      const optimizeLevel =
+        tool === "compress-pdf" &&
+        typeof params.optimizeLevel === "number" &&
+        Number.isInteger(params.optimizeLevel) &&
+        params.optimizeLevel >= 0 &&
+        params.optimizeLevel <= 10
+          ? params.optimizeLevel
+          : undefined;
+      steps.push({
+        tool,
+        params: optimizeLevel !== undefined ? { file, optimizeLevel } : { file },
+        outputFile,
+        description,
+      });
     } else {
       throw new Error(`Unknown tool in the plan: ${tool}.`);
     }
@@ -579,6 +623,31 @@ async function runStep(step: PlanStep, workspace: Map<string, Blob>): Promise<Bl
   const toFile = (blob: Blob, name: string): File =>
     new File([blob], name, { type: blob.type || "application/pdf" });
   const inputFile = (): File => toFile(resolve(step.params.file ?? ""), step.params.file ?? "input");
+
+  if (step.tool === "compress-pdf") {
+    const file = inputFile();
+    const blob = await compressPdfViaApi(file, {
+      optimizeLevel: step.params.optimizeLevel ?? 5,
+    });
+    // Some PDFs (already-optimized JPEG streams, exotic encodings) come back
+    // essentially unchanged from a moderate pass. Retry once at the most
+    // aggressive level before returning the file as-is.
+    if (blob.size >= file.size * 0.95 && file.size > 64 * 1024) {
+      const retry = await compressPdfViaApi(file, { optimizeLevel: 9 });
+      if (retry.size < blob.size) return retry;
+    }
+    return blob;
+  }
+  if (step.tool === "repair-pdf") {
+    return repairPdfViaApi(inputFile());
+  }
+  if (step.tool === "ocr-pdf") {
+    return ocrPdfViaApi(inputFile(), {
+      languages: ["eng"],
+      ocrType: "skip-text",
+      ocrRenderType: "hocr",
+    });
+  }
 
   if (OFFICE_TO_PDF.has(step.tool)) {
     const converted = step.tool === "html-to-pdf" ? convertHtmlToPdf : convertOfficeToPdf;

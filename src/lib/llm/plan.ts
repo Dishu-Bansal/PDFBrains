@@ -625,7 +625,18 @@ async function runStep(step: PlanStep, workspace: Map<string, Blob>): Promise<Bl
   const inputFile = (): File => toFile(resolve(step.params.file ?? ""), step.params.file ?? "input");
 
   if (step.tool === "compress-pdf") {
-    return compressPdfViaApi(inputFile(), { optimizeLevel: step.params.optimizeLevel ?? 5 });
+    const file = inputFile();
+    const blob = await compressPdfViaApi(file, {
+      optimizeLevel: step.params.optimizeLevel ?? 5,
+    });
+    // Some PDFs (already-optimized JPEG streams, exotic encodings) come back
+    // essentially unchanged from a moderate pass. Retry once at the most
+    // aggressive level before returning the file as-is.
+    if (blob.size >= file.size * 0.95 && file.size > 64 * 1024) {
+      const retry = await compressPdfViaApi(file, { optimizeLevel: 9 });
+      if (retry.size < blob.size) return retry;
+    }
+    return blob;
   }
   if (step.tool === "repair-pdf") {
     return repairPdfViaApi(inputFile());

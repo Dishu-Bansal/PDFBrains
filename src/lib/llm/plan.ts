@@ -144,7 +144,7 @@ function plannerPrompt(files: PlannerFile[]): string {
     "- pdf-to-excel: convert a PDF to Excel (output ends .xlsx).",
     "- pdf-to-pdfa: convert a PDF to PDF/A (outputFormat pdfa1b|pdfa2b|pdfa2u|pdfa3b|pdfa3u, default pdfa2b; output ends .pdf).",
     "- pdf-to-jpg: convert PDF pages to JPG images packaged as a ZIP (params: file, pages?: number[]; default all pages; output ends .zip).",
-    "- compress-pdf: shrink a PDF's file size (params: file, optimizeLevel 0-10 optional, default 5; output ends .pdf).",
+    "- compress-pdf: shrink a PDF's file size (params: file, optimizeLevel 0-10 optional, default 5; output ends .pdf). Set optimizeLevel to 9 when the user asks for maximum or strongest compression; omit it otherwise.",
     "- repair-pdf: rebuild a broken or damaged PDF (params: file; output ends .pdf).",
     "- ocr-pdf: add an English text layer to scanned or image-based pages (params: file; output ends .pdf).",
     "- word-to-pdf, powerpoint-to-pdf, excel-to-pdf: convert an Office file to PDF (params: file; output ends .pdf).",

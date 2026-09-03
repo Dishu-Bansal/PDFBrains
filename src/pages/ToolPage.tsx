@@ -13,6 +13,7 @@ import { PageWorkspace } from "../components/PageWorkspace";
 import type { PageMode } from "../components/PageWorkspace";
 import { getTool, relatedTools } from "../data/tools";
 import type { Tool } from "../data/tools";
+import { UpcomingTag } from "../components/UpcomingTag";
 import {
   compressPdfViaApi,
   convertHtmlToPdf,
@@ -893,7 +894,7 @@ function ToolWorkspace({ tool }: { tool: Tool }) {
     }
   };
 
-  const similar = relatedTools(tool);
+  const similar = relatedTools(tool).filter((item) => !item.upcoming);
   const pdfTool = tool.workspace === "pages" || tool.accept === "application/pdf";
   const hasFiles = files.length > 0;
   const htmlDropAccept =
@@ -1964,12 +1965,102 @@ function ToolWorkspace({ tool }: { tool: Tool }) {
   );
 }
 
+/**
+ * Rendered for tools whose processing is not implemented yet: a short
+ * "coming soon" page with the Upcoming tag, instead of the drop zone and
+ * workspace. The tool stays reachable by URL only (every menu entry for it
+ * is disabled).
+ */
+function UpcomingTool({ tool }: { tool: Tool }) {
+  const similar = relatedTools(tool).filter((item) => !item.upcoming);
+  return (
+    <>
+      <Nav />
+      <main className="mx-auto max-w-[1400px] px-4 pb-24 pt-14 sm:px-6 lg:px-8">
+        <Link
+          to="/#tools"
+          className="inline-flex items-center gap-2 text-[14px] text-muted transition hover:text-ink"
+        >
+          <ArrowLeft size={15} weight="bold" />
+          All tools
+        </Link>
+
+        <div className="mt-10 flex items-start gap-5">
+          <span className="flex size-14 shrink-0 items-center justify-center rounded-2xl bg-accentsoft/70 text-accent/80">
+            <tool.Icon size={28} weight="regular" />
+          </span>
+          <div className="min-w-0">
+            <div className="flex flex-wrap items-center gap-x-3 gap-y-1.5">
+              <h1 className="text-3xl font-semibold tracking-tight sm:text-4xl">{tool.name}</h1>
+              <UpcomingTag />
+            </div>
+            <p className="mt-2 max-w-[52ch] text-[16px] leading-relaxed text-muted">
+              {tool.tagline}
+            </p>
+          </div>
+        </div>
+
+        <div className="mt-10 max-w-[760px] rounded-3xl border border-line bg-surface px-6 py-16 text-center sm:px-10">
+          <p className="text-xl font-semibold tracking-tight">This tool is coming soon.</p>
+          <p className="mx-auto mt-2 max-w-[46ch] text-[14px] leading-relaxed text-muted">
+            The workspace for {tool.name.toLowerCase()} is ready, but its processing is still being
+            wired up. Check back shortly.
+          </p>
+          <Link
+            to="/#tools"
+            className="mt-6 inline-flex h-11 items-center gap-2 rounded-full bg-ink px-6 text-[14px] font-medium text-paper transition hover:opacity-90 active:scale-[0.98]"
+          >
+            Browse all tools
+            <ArrowRight size={15} weight="bold" />
+          </Link>
+        </div>
+
+        {similar.length > 0 && (
+          <section className="mt-20" aria-label={`More ${tool.category} tools`}>
+            <h2 className="text-xl font-semibold tracking-tight">
+              More {tool.category.toLowerCase()} tools
+            </h2>
+            <div className="mt-6 grid gap-3 sm:grid-cols-2 lg:grid-cols-4">
+              {similar.map((item) => (
+                <Link
+                  key={item.slug}
+                  to={`/tools/${item.slug}`}
+                  className="group flex items-center gap-3 rounded-2xl border border-line bg-surface p-4 transition hover:border-linestrong active:scale-[0.99]"
+                >
+                  <span className="flex size-9 shrink-0 items-center justify-center rounded-[10px] bg-accentsoft text-accent">
+                    <item.Icon size={18} weight="regular" />
+                  </span>
+                  <span className="min-w-0 flex-1">
+                    <span className="block truncate text-[15px] font-medium leading-tight">
+                      {item.name}
+                    </span>
+                  </span>
+                  <ArrowRight
+                    size={15}
+                    weight="bold"
+                    className="shrink-0 text-muted opacity-0 transition group-hover:opacity-100 group-focus-visible:opacity-100"
+                  />
+                </Link>
+              ))}
+            </div>
+          </section>
+        )}
+      </main>
+      <Footer />
+    </>
+  );
+}
+
 export function ToolPage() {
   const { slug } = useParams<{ slug: string }>();
   const tool = slug ? getTool(slug) : undefined;
 
   if (!tool) {
     return <Navigate to="/" replace />;
+  }
+
+  if (tool.upcoming) {
+    return <UpcomingTool tool={tool} />;
   }
 
   return <ToolWorkspace key={tool.slug} tool={tool} />;

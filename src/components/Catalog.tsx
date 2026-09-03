@@ -3,6 +3,7 @@ import { useState } from "react";
 import { Link } from "react-router-dom";
 
 import { Reveal } from "./Reveal";
+import { UpcomingTag } from "./UpcomingTag";
 import { CATEGORIES, CATEGORY_NOTES, toolsByCategory, TOOLS } from "../data/tools";
 
 /**
@@ -79,27 +80,47 @@ export function Catalog() {
                       <ul className="mt-3 space-y-0.5">
                         {tools.map((tool) => (
                           <li key={tool.slug}>
-                            <Link
-                              to={`/tools/${tool.slug}`}
-                              className="group flex items-center gap-3 rounded-2xl p-2.5 transition hover:bg-paper active:scale-[0.99]"
-                            >
-                              <span className="flex size-9 shrink-0 items-center justify-center rounded-[10px] bg-accentsoft text-accent">
-                                <tool.Icon size={19} weight="regular" />
-                              </span>
-                              <span className="min-w-0">
-                                <span className="block truncate text-[15px] font-medium leading-tight">
-                                  {tool.name}
+                            {tool.upcoming ? (
+                              <div
+                                aria-disabled="true"
+                                className="flex cursor-default items-center gap-3 rounded-2xl p-2.5 select-none"
+                              >
+                                <span className="flex size-9 shrink-0 items-center justify-center rounded-[10px] bg-accentsoft/60 text-accent/70">
+                                  <tool.Icon size={19} weight="regular" />
                                 </span>
-                                <span className="block truncate text-[13px] leading-snug text-muted">
-                                  {tool.tagline}
+                                <span className="min-w-0 flex-1">
+                                  <span className="block truncate text-[15px] font-medium leading-tight">
+                                    {tool.name}
+                                  </span>
+                                  <span className="block truncate text-[13px] leading-snug text-muted">
+                                    {tool.tagline}
+                                  </span>
                                 </span>
-                              </span>
-                              <ArrowRight
-                                size={16}
-                                weight="bold"
-                                className="ml-auto shrink-0 -translate-x-1 text-muted opacity-0 transition group-hover:translate-x-0 group-hover:opacity-100 group-focus-visible:translate-x-0 group-focus-visible:opacity-100"
-                              />
-                            </Link>
+                                <UpcomingTag />
+                              </div>
+                            ) : (
+                              <Link
+                                to={`/tools/${tool.slug}`}
+                                className="group flex items-center gap-3 rounded-2xl p-2.5 transition hover:bg-paper active:scale-[0.99]"
+                              >
+                                <span className="flex size-9 shrink-0 items-center justify-center rounded-[10px] bg-accentsoft text-accent">
+                                  <tool.Icon size={19} weight="regular" />
+                                </span>
+                                <span className="min-w-0">
+                                  <span className="block truncate text-[15px] font-medium leading-tight">
+                                    {tool.name}
+                                  </span>
+                                  <span className="block truncate text-[13px] leading-snug text-muted">
+                                    {tool.tagline}
+                                  </span>
+                                </span>
+                                <ArrowRight
+                                  size={16}
+                                  weight="bold"
+                                  className="ml-auto shrink-0 -translate-x-1 text-muted opacity-0 transition group-hover:translate-x-0 group-hover:opacity-100 group-focus-visible:translate-x-0 group-focus-visible:opacity-100"
+                                />
+                              </Link>
+                            )}
                           </li>
                         ))}
                       </ul>

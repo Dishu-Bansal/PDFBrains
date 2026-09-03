@@ -1,12 +1,12 @@
 import { CaretDown, List, Sparkle, X } from "@phosphor-icons/react";
 import { useEffect, useRef, useState } from "react";
-import type { ReactNode } from "react";
 import { Link, useLocation } from "react-router-dom";
 
 import { Logo } from "./Logo";
 import { ThemeToggle } from "./ThemeToggle";
+import { UpcomingTag } from "./UpcomingTag";
 import { CATEGORIES, getTool, toolsByCategory } from "../data/tools";
-import type { Category } from "../data/tools";
+import type { Category, Tool } from "../data/tools";
 
 const QUICK_SLUGS = ["merge-pdf", "split-pdf", "compress-pdf"];
 
@@ -14,14 +14,31 @@ const CONVERT_GROUPS: Category[] = ["Convert to PDF", "Convert from PDF"];
 
 type OpenMenu = "convert" | "all" | null;
 
-function DropdownLink({ to, onNavigate, children }: { to: string; onNavigate: () => void; children: ReactNode }) {
+function DropdownLink({
+  tool,
+  onNavigate,
+}: {
+  tool: Tool;
+  onNavigate: () => void;
+}) {
+  if (tool.upcoming) {
+    return (
+      <span
+        aria-disabled="true"
+        className="flex cursor-default items-center justify-between gap-2 rounded-lg px-2.5 py-1.5 text-[13px] text-muted select-none"
+      >
+        <span className="truncate">{tool.name}</span>
+        <UpcomingTag />
+      </span>
+    );
+  }
   return (
     <Link
-      to={to}
+      to={`/tools/${tool.slug}`}
       onClick={onNavigate}
       className="block rounded-lg px-2.5 py-1.5 text-[13px] text-muted transition hover:bg-paper hover:text-ink"
     >
-      {children}
+      {tool.name}
     </Link>
   );
 }
@@ -119,9 +136,7 @@ export function Nav() {
                       {category}
                     </p>
                     {toolsByCategory(category).map((tool) => (
-                      <DropdownLink key={tool.slug} to={`/tools/${tool.slug}`} onNavigate={closeMenus}>
-                        {tool.name}
-                      </DropdownLink>
+                      <DropdownLink key={tool.slug} tool={tool} onNavigate={closeMenus} />
                     ))}
                   </div>
                 ))}
@@ -143,9 +158,7 @@ export function Nav() {
                     </p>
                     <div className="mt-1.5">
                       {toolsByCategory(category).map((tool) => (
-                        <DropdownLink key={tool.slug} to={`/tools/${tool.slug}`} onNavigate={closeMenus}>
-                          {tool.name}
-                        </DropdownLink>
+                        <DropdownLink key={tool.slug} tool={tool} onNavigate={closeMenus} />
                       ))}
                     </div>
                   </div>
@@ -200,16 +213,27 @@ export function Nav() {
               <div key={category} className="mt-5">
                 <p className="text-[11px] font-semibold tracking-wide text-muted">{category}</p>
                 <div className="mt-1.5 flex flex-wrap gap-1.5">
-                  {toolsByCategory(category).map((tool) => (
-                    <Link
-                      key={tool.slug}
-                      to={`/tools/${tool.slug}`}
-                      onClick={closeMenus}
-                      className="rounded-full bg-raised px-3 py-1.5 text-[13px] text-ink transition hover:text-accent"
-                    >
-                      {tool.name}
-                    </Link>
-                  ))}
+                  {toolsByCategory(category).map((tool) =>
+                    tool.upcoming ? (
+                      <span
+                        key={tool.slug}
+                        aria-disabled="true"
+                        className="inline-flex cursor-default items-center gap-1.5 rounded-full border border-dashed border-linestrong bg-surface py-1 pl-3 pr-1.5 text-[13px] text-muted select-none"
+                      >
+                        <span className="truncate">{tool.name}</span>
+                        <UpcomingTag />
+                      </span>
+                    ) : (
+                      <Link
+                        key={tool.slug}
+                        to={`/tools/${tool.slug}`}
+                        onClick={closeMenus}
+                        className="rounded-full bg-raised px-3 py-1.5 text-[13px] text-ink transition hover:text-accent"
+                      >
+                        {tool.name}
+                      </Link>
+                    )
+                  )}
                 </div>
               </div>
             ))}

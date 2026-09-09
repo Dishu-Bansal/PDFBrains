@@ -8,11 +8,13 @@ import { EditorWorkspace } from "../components/editor/EditorWorkspace";
 import { FileStrip } from "../components/FileStrip";
 import { Footer } from "../components/Footer";
 import { Nav } from "../components/Nav";
+import { Seo } from "../components/Seo";
 import { OrganizeWorkspace } from "../components/OrganizeWorkspace";
 import { PageWorkspace } from "../components/PageWorkspace";
 import type { PageMode } from "../components/PageWorkspace";
 import { getTool, relatedTools } from "../data/tools";
 import type { Tool } from "../data/tools";
+import { toolSeo, upcomingToolSeo } from "../lib/seo";
 import { UpcomingTag } from "../components/UpcomingTag";
 import {
   compressPdfViaApi,
@@ -490,7 +492,6 @@ function ToolWorkspace({ tool }: { tool: Tool }) {
     switch (tool.slug) {
       case "merge-pdf":
         return files.length >= 2;
-      case "split-pdf":
       case "extract-pages":
         return selected.size > 0 && !!pdfState.doc;
       case "split-pdf":
@@ -1761,6 +1762,7 @@ function ToolWorkspace({ tool }: { tool: Tool }) {
 
   return (
     <>
+      <Seo {...toolSeo(tool)} />
       <Nav />
       <main className="mx-auto max-w-[1400px] px-4 pb-24 pt-14 sm:px-6 lg:px-8">
         <Link
@@ -1975,6 +1977,7 @@ function UpcomingTool({ tool }: { tool: Tool }) {
   const similar = relatedTools(tool).filter((item) => !item.upcoming);
   return (
     <>
+      <Seo {...upcomingToolSeo(tool)} />
       <Nav />
       <main className="mx-auto max-w-[1400px] px-4 pb-24 pt-14 sm:px-6 lg:px-8">
         <Link

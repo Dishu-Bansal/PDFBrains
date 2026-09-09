@@ -13,6 +13,8 @@ import { useEffect, useRef, useState } from "react";
 import type { DragEvent, KeyboardEvent } from "react";
 
 import { Nav } from "../components/Nav";
+import { Seo } from "../components/Seo";
+import { AI_ASSIST_SEO } from "../lib/seo";
 import { isLlmConfigured } from "../lib/llm";
 import { runLlmChat } from "../lib/llm/chat";
 import { executePlan, runLlmPlan } from "../lib/llm/plan";
@@ -543,6 +545,7 @@ export function AiAssist() {
 
   return (
     <>
+      <Seo {...AI_ASSIST_SEO} />
       <Nav />
       <main className="mx-auto flex h-[calc(100dvh-4rem)] w-full max-w-[900px] flex-col px-4 pb-4 pt-6 sm:px-6">
         <div className="flex shrink-0 items-start justify-between gap-4">

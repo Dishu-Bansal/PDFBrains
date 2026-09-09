@@ -2,10 +2,13 @@ import { Link } from "react-router-dom";
 
 import { Footer } from "../components/Footer";
 import { Nav } from "../components/Nav";
+import { Seo } from "../components/Seo";
+import { NOT_FOUND_SEO } from "../lib/seo";
 
 export function NotFound() {
   return (
     <>
+      <Seo {...NOT_FOUND_SEO} />
       <Nav />
       <main className="mx-auto flex min-h-[60dvh] max-w-[1400px] flex-col items-start justify-center px-4 py-24 sm:px-6 lg:px-8">
         <p className="font-mono text-[13px] text-accent">404</p>

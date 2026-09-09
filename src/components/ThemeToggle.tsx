@@ -2,6 +2,9 @@ import { Moon, Sun } from "@phosphor-icons/react";
 import { useEffect, useState } from "react";
 
 function resolveInitial(): "light" | "dark" {
+  // Guarded for prerendering: no document in Node, default to light.
+  // The client hydrates to the real theme; a one-icon mismatch self-heals.
+  if (typeof document === "undefined") return "light";
   return document.documentElement.dataset.theme === "dark" ? "dark" : "light";
 }
 

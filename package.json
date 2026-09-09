@@ -5,7 +5,12 @@
   "type": "module",
   "scripts": {
     "dev": "vite",
-    "build": "tsc --noEmit && vite build",
+    "sitemap": "node scripts/generate-sitemap.mjs",
+    "prebuild": "node scripts/generate-sitemap.mjs",
+    "build:client": "vite build",
+    "build:server": "vite build --ssr src/entry-server.tsx --outDir dist-ssr",
+    "prerender": "node scripts/prerender.mjs",
+    "build": "tsc --noEmit && npm run build:client && npm run build:server && npm run prerender",
     "preview": "vite preview",
     "sample": "node scripts/make-sample.mjs"
   },

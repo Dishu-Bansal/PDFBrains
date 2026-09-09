@@ -492,7 +492,6 @@ function ToolWorkspace({ tool }: { tool: Tool }) {
     switch (tool.slug) {
       case "merge-pdf":
         return files.length >= 2;
-      case "split-pdf":
       case "extract-pages":
         return selected.size > 0 && !!pdfState.doc;
       case "split-pdf":

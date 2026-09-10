@@ -3,6 +3,7 @@ import {
   CheckCircle,
   DownloadSimple,
   FilePdf,
+  LockSimple,
   Paperclip,
   Sparkle,
   SpinnerGap,
@@ -15,6 +16,7 @@ import type { DragEvent, KeyboardEvent } from "react";
 import { Nav } from "../components/Nav";
 import { Seo } from "../components/Seo";
 import { AI_ASSIST_SEO } from "../lib/seo";
+import { takeAiFiles } from "../lib/aiHandoff";
 import { isLlmConfigured } from "../lib/llm";
 import { runLlmChat } from "../lib/llm/chat";
 import { executePlan, runLlmPlan } from "../lib/llm/plan";
@@ -52,10 +54,10 @@ interface ChatMessage {
 }
 
 const SUGGESTIONS = [
-  "Summarize this PDF",
-  "Extract the key points",
-  "Rewrite this for clarity",
-  "What is this document about?",
+  "Split this PDF after page 4, then merge the second part with the other file",
+  "Extract pages 3 and 5 from the first PDF and merge them with the second half of the other",
+  "Reorder this PDF's pages as 3, 5, 1, 4, 2, 6",
+  "Delete pages 1, 9 and 10 from this PDF",
 ];
 
 const SYSTEM_PROMPT =
@@ -150,11 +152,16 @@ export function AiAssist() {
     }
   }, [mentionQuery, mentionIndex, files]);
 
-  const addFiles = (list: FileList | null) => {
+  const addFiles = (list: FileList | File[] | null) => {
     if (!list || list.length === 0) return;
     const next = Array.from(list).map((file) => ({ name: file.name, size: file.size, file }));
     setFiles((prev) => [...prev, ...next]);
   };
+
+  // Files dropped on the home hero arrive via the handoff stash.
+  useEffect(() => {
+    addFiles(takeAiFiles());
+  }, []);
 
   const removeFile = (index: number) => {
     setFiles((prev) => prev.filter((_, i) => i !== index));
@@ -720,6 +727,11 @@ export function AiAssist() {
               Type <span className="font-mono text-ink">@</span> to reference an attached file in your question.
             </p>
           )}
+          <p className="mt-1.5 flex items-center gap-1.5 px-1.5 text-[11px] text-muted">
+            <LockSimple size={11} className="shrink-0" weight="regular" />
+            AI sees file names only — never contents. Server-run tasks (e.g. OCR) are
+            deleted the moment they finish.
+          </p>
 
           <input
             ref={inputRef}
@@ -754,7 +766,10 @@ function WelcomePanel({
       <h2 className="mt-4 text-xl font-semibold tracking-tight">Ask anything about your documents</h2>
       <p className="mt-1.5 max-w-[46ch] text-[14px] leading-relaxed text-muted">
         Drop PDFs into the chat, tell it what you want, and it plans the
-        operations step by step for your approval before running them locally.
+        operations step by step for your approval before running them.
+        The AI only ever sees file names — never contents. A few heavy tasks
+        (like OCR) run on our server instead, and those files are deleted the
+        moment the task finishes.
       </p>
       <div className="mt-5 flex flex-wrap items-center justify-center gap-2">
         {SUGGESTIONS.map((suggestion) => (

@@ -15,6 +15,7 @@ import type { DragEvent, KeyboardEvent } from "react";
 import { Nav } from "../components/Nav";
 import { Seo } from "../components/Seo";
 import { AI_ASSIST_SEO } from "../lib/seo";
+import { takeAiFiles } from "../lib/aiHandoff";
 import { isLlmConfigured } from "../lib/llm";
 import { runLlmChat } from "../lib/llm/chat";
 import { executePlan, runLlmPlan } from "../lib/llm/plan";
@@ -150,11 +151,16 @@ export function AiAssist() {
     }
   }, [mentionQuery, mentionIndex, files]);
 
-  const addFiles = (list: FileList | null) => {
+  const addFiles = (list: FileList | File[] | null) => {
     if (!list || list.length === 0) return;
     const next = Array.from(list).map((file) => ({ name: file.name, size: file.size, file }));
     setFiles((prev) => [...prev, ...next]);
   };
+
+  // Files dropped on the home hero arrive via the handoff stash.
+  useEffect(() => {
+    addFiles(takeAiFiles());
+  }, []);
 
   const removeFile = (index: number) => {
     setFiles((prev) => prev.filter((_, i) => i !== index));

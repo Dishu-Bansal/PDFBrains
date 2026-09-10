@@ -1,18 +1,20 @@
 import { motion, useReducedMotion } from "motion/react";
-import { useState } from "react";
-import { Link } from "react-router-dom";
+import { Sparkle } from "@phosphor-icons/react";
+import { Link, useNavigate } from "react-router-dom";
 
 import { Dropzone } from "./Dropzone";
+import { stashAiFiles } from "../lib/aiHandoff";
 
 export function Hero() {
   const reduce = useReducedMotion();
-  const [heroFiles, setHeroFiles] = useState<File[]>([]);
+  const navigate = useNavigate();
 
+  // Files dropped here skip the catalog: they open straight in AI Assist,
+  // attached and ready for instructions.
   const onHeroFiles = (files: File[]) => {
-    setHeroFiles(files);
-    if (files.length > 0) {
-      document.getElementById("tools")?.scrollIntoView();
-    }
+    if (files.length === 0) return;
+    stashAiFiles(files);
+    navigate("/ai-assist");
   };
 
   const fade = (delay: number) => ({
@@ -36,7 +38,9 @@ export function Hero() {
             {...fade(0.08)}
             className="mt-6 max-w-[46ch] text-lg leading-relaxed text-muted"
           >
-            Merge, split, compress and convert in seconds. No installs, no sign-up, no waiting.
+            Merge, split, compress and convert in seconds — or drop your files and tell{" "}
+            <span className="font-medium text-ink">AI Assist</span> what you want in plain
+            words. No installs, no sign-up, no waiting.
           </motion.p>
 
           <motion.div {...fade(0.16)} className="mt-9 flex flex-wrap items-center gap-3">
@@ -47,10 +51,11 @@ export function Hero() {
               Browse tools
             </Link>
             <Link
-              to="/#how"
-              className="inline-flex h-12 items-center rounded-full border border-line bg-surface px-7 text-[16px] font-medium text-ink transition hover:border-linestrong active:scale-[0.97]"
+              to="/ai-assist"
+              className="inline-flex h-12 items-center gap-2 rounded-full border border-line bg-surface px-7 text-[16px] font-medium text-ink transition hover:border-accent hover:text-accentstrong active:scale-[0.97]"
             >
-              How it works
+              <Sparkle size={18} weight="regular" />
+              Try AI Assist
             </Link>
           </motion.div>
         </div>
@@ -70,7 +75,7 @@ export function Hero() {
             className="absolute -bottom-5 -left-2 hidden h-44 w-36 -rotate-3 rounded-2xl border border-line bg-surface/70 sm:block"
           />
           <div className="relative">
-            <Dropzone files={heroFiles} onFiles={onHeroFiles} variant="hero" />
+            <Dropzone files={[]} onFiles={onHeroFiles} variant="hero" />
           </div>
         </motion.div>
       </div>

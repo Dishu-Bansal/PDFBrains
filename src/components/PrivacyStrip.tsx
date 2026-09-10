@@ -8,8 +8,9 @@ export function PrivacyStrip() {
         <p className="text-[14px] leading-relaxed text-muted">
           <span className="font-medium text-ink">Private by design.</span> Your files are handled
           only for the job at hand and are never stored longer than they need to be. AI Assist
-          only ever sees file names — never file contents — and every plan runs locally, only
-          after your approval.
+          only ever sees file names — never file contents. A few heavy tasks (like OCR) run
+          on our server instead of your browser, and those files are deleted the moment the
+          task finishes.
         </p>
       </div>
     </section>

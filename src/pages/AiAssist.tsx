@@ -729,8 +729,8 @@ export function AiAssist() {
           )}
           <p className="mt-1.5 flex items-center gap-1.5 px-1.5 text-[11px] text-muted">
             <LockSimple size={11} className="shrink-0" weight="regular" />
-            AI sees file names only — contents never leave your browser. Plans run locally,
-            after your approval.
+            AI sees file names only — never contents. Server-run tasks (e.g. OCR) are
+            deleted the moment they finish.
           </p>
 
           <input
@@ -766,8 +766,10 @@ function WelcomePanel({
       <h2 className="mt-4 text-xl font-semibold tracking-tight">Ask anything about your documents</h2>
       <p className="mt-1.5 max-w-[46ch] text-[14px] leading-relaxed text-muted">
         Drop PDFs into the chat, tell it what you want, and it plans the
-        operations step by step for your approval before running them locally.
-        The AI only ever sees file names — your file contents never leave your browser.
+        operations step by step for your approval before running them.
+        The AI only ever sees file names — never contents. A few heavy tasks
+        (like OCR) run on our server instead, and those files are deleted the
+        moment the task finishes.
       </p>
       <div className="mt-5 flex flex-wrap items-center justify-center gap-2">
         {SUGGESTIONS.map((suggestion) => (

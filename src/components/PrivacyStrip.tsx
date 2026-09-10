@@ -7,7 +7,9 @@ export function PrivacyStrip() {
         <LockSimple size={18} className="shrink-0 text-accent" weight="regular" />
         <p className="text-[14px] leading-relaxed text-muted">
           <span className="font-medium text-ink">Private by design.</span> Your files are handled
-          only for the job at hand and are never stored longer than they need to be.
+          only for the job at hand and are never stored longer than they need to be. AI Assist
+          only ever sees file names — never file contents — and every plan runs locally, only
+          after your approval.
         </p>
       </div>
     </section>

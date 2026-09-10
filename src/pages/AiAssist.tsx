@@ -3,6 +3,7 @@ import {
   CheckCircle,
   DownloadSimple,
   FilePdf,
+  LockSimple,
   Paperclip,
   Sparkle,
   SpinnerGap,
@@ -726,6 +727,11 @@ export function AiAssist() {
               Type <span className="font-mono text-ink">@</span> to reference an attached file in your question.
             </p>
           )}
+          <p className="mt-1.5 flex items-center gap-1.5 px-1.5 text-[11px] text-muted">
+            <LockSimple size={11} className="shrink-0" weight="regular" />
+            AI sees file names only — contents never leave your browser. Plans run locally,
+            after your approval.
+          </p>
 
           <input
             ref={inputRef}
@@ -761,6 +767,7 @@ function WelcomePanel({
       <p className="mt-1.5 max-w-[46ch] text-[14px] leading-relaxed text-muted">
         Drop PDFs into the chat, tell it what you want, and it plans the
         operations step by step for your approval before running them locally.
+        The AI only ever sees file names — your file contents never leave your browser.
       </p>
       <div className="mt-5 flex flex-wrap items-center justify-center gap-2">
         {SUGGESTIONS.map((suggestion) => (

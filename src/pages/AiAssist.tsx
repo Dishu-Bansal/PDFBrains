@@ -52,10 +52,10 @@ interface ChatMessage {
 }
 
 const SUGGESTIONS = [
-  "Summarize this PDF",
-  "Extract the key points",
-  "Rewrite this for clarity",
-  "What is this document about?",
+  "Split this PDF after page 4, then merge the second part with the other file",
+  "Extract pages 3 and 5 from the first PDF and merge them with the second half of the other",
+  "Reorder this PDF's pages as 3, 5, 1, 4, 2, 6",
+  "Delete pages 1, 9 and 10 from this PDF",
 ];
 
 const SYSTEM_PROMPT =

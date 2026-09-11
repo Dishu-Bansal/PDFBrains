@@ -2,6 +2,7 @@ import { lazy, Suspense } from "react";
 import { Route, Routes } from "react-router-dom";
 
 import { ScrollToTop } from "./components/ScrollToTop";
+import { Analytics } from "./components/Analytics";
 import { Home } from "./pages/Home";
 import { NotFound } from "./pages/NotFound";
 
@@ -27,6 +28,7 @@ export default function App() {
   return (
     <>
       <ScrollToTop />
+      <Analytics />
       <Routes>
         <Route path="/" element={<Home />} />
         <Route

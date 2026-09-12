@@ -7,7 +7,9 @@ import { Home } from "./pages/Home";
 import { NotFound } from "./pages/NotFound";
 
 // ToolPage pulls in pdf-lib and the workspace machinery; load it only when
-// a tool route is actually visited.
+// a tool route is actually visited. NOTE: lazy routes cannot hydrate (see
+// needsAsyncChunk in main.tsx) — if you lazy-load another route, add its
+// path there too or it will throw React #418/#423 on direct loads.
 const ToolPage = lazy(() =>
   import("./pages/ToolPage").then((module) => ({ default: module.ToolPage }))
 );

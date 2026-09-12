@@ -19,8 +19,9 @@ const app = (
 
 // Production HTML is prerendered per route (scripts/prerender.mjs): hydrate
 // onto it so direct visits keep the SSR content. Dev / fallback shells have
-// an empty mount point, so mount normally. A one-icon ThemeToggle mismatch
-// for dark-mode users self-heals and only warns in dev.
+// an empty mount point, so mount normally. SSR and the first client render
+// must stay byte-identical (see ThemeToggle) or hydration fails over to a
+// full client render.
 if (container.hasChildNodes()) {
   hydrateRoot(container, app);
 } else {

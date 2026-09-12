@@ -3,6 +3,8 @@ import { Route, Routes } from "react-router-dom";
 
 import { ScrollToTop } from "./components/ScrollToTop";
 import { Analytics } from "./components/Analytics";
+import { FeedbackButton } from "./components/FeedbackButton";
+import { FeedbackRoot } from "./components/FeedbackModal";
 import { Home } from "./pages/Home";
 import { NotFound } from "./pages/NotFound";
 
@@ -29,6 +31,8 @@ export default function App() {
     <>
       <ScrollToTop />
       <Analytics />
+      <FeedbackButton />
+      <FeedbackRoot />
       <Routes>
         <Route path="/" element={<Home />} />
         <Route

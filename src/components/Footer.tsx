@@ -2,6 +2,7 @@ import { Link } from "react-router-dom";
 
 import { Logo } from "./Logo";
 import { getTool } from "../data/tools";
+import { isFeedbackEnabled, requestFeedback } from "../lib/feedback";
 
 const POPULAR_SLUGS = [
   "merge-pdf",
@@ -61,6 +62,28 @@ export function Footer() {
                   Contact
                 </a>
               </li>
+              {isFeedbackEnabled() && (
+                <>
+                  <li>
+                    <button
+                      type="button"
+                      onClick={() => requestFeedback("feature")}
+                      className="text-[14px] text-muted transition hover:text-ink"
+                    >
+                      Request a feature
+                    </button>
+                  </li>
+                  <li>
+                    <button
+                      type="button"
+                      onClick={() => requestFeedback("bug")}
+                      className="text-[14px] text-muted transition hover:text-ink"
+                    >
+                      Report a bug
+                    </button>
+                  </li>
+                </>
+              )}
             </ul>
           </div>
         </div>

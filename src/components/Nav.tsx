@@ -7,6 +7,7 @@ import { ThemeToggle } from "./ThemeToggle";
 import { UpcomingTag } from "./UpcomingTag";
 import { CATEGORIES, getTool, toolsByCategory } from "../data/tools";
 import type { Category, Tool } from "../data/tools";
+import { isFeedbackEnabled, requestFeedback } from "../lib/feedback";
 
 const QUICK_SLUGS = ["merge-pdf", "split-pdf", "compress-pdf"];
 
@@ -168,6 +169,15 @@ export function Nav() {
           </div>
 
           <ThemeToggle />
+          {isFeedbackEnabled() && (
+            <button
+              type="button"
+              onClick={() => requestFeedback("feature")}
+              className="inline-flex h-9 items-center rounded-full px-4 text-[14px] font-medium text-muted transition hover:bg-raised hover:text-ink"
+            >
+              Feedback
+            </button>
+          )}
         </div>
 
         <div className="flex items-center gap-1.5 lg:hidden">
@@ -195,6 +205,18 @@ export function Nav() {
               <Sparkle size={15} weight="bold" />
               AI Assist
             </Link>
+            {isFeedbackEnabled() && (
+              <button
+                type="button"
+                onClick={() => {
+                  closeMenus();
+                  requestFeedback("feature");
+                }}
+                className="inline-flex h-10 items-center rounded-full border border-line bg-surface px-5 text-[14px] font-medium text-ink"
+              >
+                Feedback
+              </button>
+            )}
 
             <div className="mt-4 flex flex-wrap gap-2">
               {quickTools.map((tool) => (

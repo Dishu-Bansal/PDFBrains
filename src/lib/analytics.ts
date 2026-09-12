@@ -27,7 +27,14 @@ let initialized = false;
  * to import during SSR (Node): it no-ops without a window.
  */
 export function initAnalytics(): void {
-  if (initialized || typeof window === "undefined" || !GA_ID) return;
+  if (typeof window === "undefined") return;
+  if (!GA_ID) {
+    // Visible in devtools (Verbose level): the common reason for "tag never
+    // fires" is a production build without VITE_GA_MEASUREMENT_ID set.
+    console.debug("[analytics] disabled: VITE_GA_MEASUREMENT_ID is not set.");
+    return;
+  }
+  if (initialized) return;
   initialized = true;
 
   window.dataLayer = window.dataLayer ?? [];

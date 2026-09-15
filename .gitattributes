@@ -1,0 +1,6 @@
+# scripts/generate-sitemap.mjs rewrites public/sitemap.xml with LF endings on
+# every build. With core.autocrlf=true (the default on Windows) git would then
+# check it out as CRLF and flag the file as modified after every build even
+# though its content is identical. Pin the generated file to LF so the
+# generator's output is exactly what git expects.
+public/sitemap.xml text eol=lf

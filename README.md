@@ -78,3 +78,46 @@ the security tools need a backend.
 - `src/components/CameraScanner.tsx` - scan-to-PDF camera capture.
 - `src/pages/ToolPage.tsx` - generic shell every `/tools/:slug` renders
   through, with per-tool options and actions.
+
+## Analytics
+
+Google Analytics 4, wired through `src/lib/analytics.ts`. There is no gtag
+snippet in `index.html`: the module injects `gtag.js` once at boot (only when
+`VITE_GA_MEASUREMENT_ID` is set) and `<Analytics/>` reports every SPA route
+change, because a client-side navigation never reloads the page and would
+otherwise be invisible.
+
+| Env var | Effect |
+|---|---|
+| `VITE_GA_MEASUREMENT_ID` | GA4 measurement ID (`G-XXXXXXXXXX`). Unset = analytics fully off, nothing is requested. |
+| `VITE_GA_DEBUG` | `true` forces reporting from dev builds and localhost/LAN hosts and tags hits with `debug_mode` (see GA DebugView). |
+
+Dev builds and local/LAN hostnames never report, so a filled-in ID in
+`.env.local` no longer pollutes the production property.
+
+### Events
+
+Only non-identifying data is sent: tool slugs, counts, sizes in MB, durations
+and error *categories*. File names, file contents, prompt text and everything
+else the user typed never leave the browser. `errorReason()` buckets raw
+errors so messages cannot leak user data.
+
+- **Navigation & discovery** - `page_view`, `tool_open` (with `source`:
+  nav/catalog/footer/hero/related/ai_assist), `tool_blocked` (an "Upcoming"
+  tool was clicked), `ai_assist_open`, `catalog_search` (term *length* only),
+  `catalog_clear`, `hero_cta`, `theme_change`, `not_found`.
+- **Files** - `files_added` (count, total MB, how they arrived),
+  `file_removed`, `files_cleared`, `sample_loaded`.
+- **Tool runs** - `tool_run_start`, `tool_run_success` (duration, outputs,
+  output MB), `tool_run_error` (duration, reason), `tool_option_change`.
+- **AI Assist** - `ai_message_sent` (mode, file count, prompt *length*),
+  `ai_suggestion_click`, `ai_chat_cleared`, `ai_plan_created`,
+  `ai_plan_discarded`, `ai_plan_run_start`, `ai_plan_step_start`,
+  `ai_plan_run_success`, `ai_plan_run_error`, `ai_result_downloaded`,
+  `ai_error`.
+- **Feedback** - `feedback_open`, `feedback_submit`, `feedback_success`,
+  `feedback_error`.
+
+`AnalyticsEventMap` in `src/lib/analytics.ts` is the source of truth: adding an
+event there is the only way to report one, so event names and parameters stay
+typed across the app.

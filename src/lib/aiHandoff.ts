@@ -4,14 +4,23 @@
  * In-memory only (File objects cannot travel in URLs); a reload simply
  * means the user drops or attaches files again.
  */
-let pending: File[] = [];
+import type { FileInputMethod } from "./analytics";
 
-export function stashAiFiles(files: File[]): void {
-  pending = files;
+export interface AiHandoff {
+  files: File[];
+  /** How the files arrived on the hero (drop vs browse), for analytics. */
+  via: FileInputMethod;
 }
 
-export function takeAiFiles(): File[] {
-  const files = pending;
-  pending = [];
-  return files;
+let pending: AiHandoff | null = null;
+
+export function stashAiFiles(files: File[], via: FileInputMethod = "unknown"): void {
+  pending = files.length > 0 ? { files, via } : null;
+}
+
+/** Returns the stashed files and how they arrived, clearing the stash. */
+export function takeAiFiles(): AiHandoff | null {
+  const handoff = pending;
+  pending = null;
+  return handoff;
 }

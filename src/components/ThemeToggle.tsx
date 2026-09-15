@@ -1,6 +1,8 @@
 import { Moon, Sun } from "@phosphor-icons/react";
 import { useEffect, useRef, useState } from "react";
 
+import { trackEvent } from "../lib/analytics";
+
 function resolveInitial(): "light" | "dark" {
   // Guarded for prerendering: no document in Node, default to light.
   if (typeof document === "undefined") return "light";
@@ -43,7 +45,10 @@ export function ThemeToggle() {
   return (
     <button
       type="button"
-      onClick={() => setTheme(next)}
+      onClick={() => {
+        setTheme(next);
+        trackEvent("theme_change", { theme: next });
+      }}
       aria-label={`Switch to ${next} mode`}
       title={`Switch to ${next} mode`}
       className="inline-flex size-10 items-center justify-center rounded-full text-muted transition hover:bg-raised hover:text-ink active:scale-[0.96]"

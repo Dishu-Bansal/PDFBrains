@@ -2,6 +2,7 @@ import { Link } from "react-router-dom";
 
 import { Logo } from "./Logo";
 import { getTool } from "../data/tools";
+import { trackEvent } from "../lib/analytics";
 import { isFeedbackEnabled, requestFeedback } from "../lib/feedback";
 
 const POPULAR_SLUGS = [
@@ -37,6 +38,7 @@ export function Footer() {
                 <li key={tool.slug}>
                   <Link
                     to={`/tools/${tool.slug}`}
+                    onClick={() => trackEvent("tool_open", { tool: tool.slug, source: "footer" })}
                     className="text-[14px] text-muted transition hover:text-ink"
                   >
                     {tool.name}

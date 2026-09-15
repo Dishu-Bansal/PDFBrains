@@ -1,11 +1,20 @@
-import { Link } from "react-router-dom";
+import { useEffect } from "react";
+import { Link, useLocation } from "react-router-dom";
 
 import { Footer } from "../components/Footer";
 import { Nav } from "../components/Nav";
 import { Seo } from "../components/Seo";
+import { trackEvent } from "../lib/analytics";
 import { NOT_FOUND_SEO } from "../lib/seo";
 
 export function NotFound() {
+  const { pathname } = useLocation();
+
+  // Reported after hydration, never during render: this page is prerendered.
+  useEffect(() => {
+    trackEvent("not_found", { path: pathname });
+  }, [pathname]);
+
   return (
     <>
       <Seo {...NOT_FOUND_SEO} />

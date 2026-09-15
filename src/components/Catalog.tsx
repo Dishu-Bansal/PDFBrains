@@ -1,10 +1,11 @@
 import { ArrowRight, MagnifyingGlass } from "@phosphor-icons/react";
-import { useState } from "react";
+import { useEffect, useRef, useState } from "react";
 import { Link } from "react-router-dom";
 
 import { Reveal } from "./Reveal";
 import { UpcomingTag } from "./UpcomingTag";
 import { CATEGORIES, CATEGORY_NOTES, toolsByCategory, TOOLS } from "../data/tools";
+import { trackEvent } from "../lib/analytics";
 
 /**
  * The toolbox: one panel, six drawers. A live filter narrows the rows,
@@ -13,9 +14,36 @@ import { CATEGORIES, CATEGORY_NOTES, toolsByCategory, TOOLS } from "../data/tool
 export function Catalog() {
   const [query, setQuery] = useState("");
   const q = query.trim().toLowerCase();
+  const searchTimer = useRef<number | null>(null);
 
-  const matches = (name: string, tagline: string) =>
-    !q || name.toLowerCase().includes(q) || tagline.toLowerCase().includes(q);
+  // Drop a pending report if the page unmounts mid-typing.
+  useEffect(
+    () => () => {
+      if (searchTimer.current !== null) window.clearTimeout(searchTimer.current);
+    },
+    []
+  );
+
+  const matches = (name: string, tagline: string, term: string) =>
+    !term || name.toLowerCase().includes(term) || tagline.toLowerCase().includes(term);
+
+  // Report a search once the user pauses, so one search is one event instead
+  // of one event per keystroke. Only the term's length leaves the browser.
+  const onQueryChange = (value: string) => {
+    setQuery(value);
+    const term = value.trim().toLowerCase();
+    if (searchTimer.current !== null) window.clearTimeout(searchTimer.current);
+    if (!term) {
+      trackEvent("catalog_clear", { surface: "catalog" });
+      return;
+    }
+    searchTimer.current = window.setTimeout(() => {
+      trackEvent("catalog_search", {
+        term_length: value.trim().length,
+        results: TOOLS.filter((tool) => matches(tool.name, tool.tagline, term)).length,
+      });
+    }, 600);
+  };
 
   return (
     <section id="tools" className="scroll-mt-20 py-20 sm:py-28">
@@ -46,7 +74,7 @@ export function Catalog() {
                 <input
                   type="search"
                   value={query}
-                  onChange={(event) => setQuery(event.target.value)}
+                  onChange={(event) => onQueryChange(event.target.value)}
                   placeholder="Filter tools..."
                   className="h-10 w-full rounded-xl border border-line bg-paper pl-10 pr-4 text-[14px] text-ink placeholder:text-muted transition focus:border-accent"
                 />
@@ -56,7 +84,7 @@ export function Catalog() {
             <div className="grid divide-y divide-line md:grid-cols-2 md:divide-x lg:grid-cols-3">
               {CATEGORIES.map((category, index) => {
                 const tools = toolsByCategory(category).filter((tool) =>
-                  matches(tool.name, tool.tagline)
+                  matches(tool.name, tool.tagline, q)
                 );
                 const empty = tools.length === 0;
 
@@ -83,6 +111,14 @@ export function Catalog() {
                             {tool.upcoming ? (
                               <div
                                 aria-disabled="true"
+                                // Still not navigable: the click only measures demand for the tool.
+                                onClick={() =>
+                                  trackEvent("tool_blocked", {
+                                    tool: tool.slug,
+                                    reason: "upcoming",
+                                    source: "catalog",
+                                  })
+                                }
                                 className="flex cursor-not-allowed items-center gap-3 rounded-2xl border border-line/70 bg-raised/90 p-2.5 select-none"
                               >
                                 <span className="flex size-9 shrink-0 items-center justify-center rounded-[10px] bg-paper text-muted/70">
@@ -101,6 +137,9 @@ export function Catalog() {
                             ) : (
                               <Link
                                 to={`/tools/${tool.slug}`}
+                                onClick={() =>
+                                  trackEvent("tool_open", { tool: tool.slug, source: "catalog" })
+                                }
                                 className="group flex items-center gap-3 rounded-2xl p-2.5 transition hover:bg-paper active:scale-[0.99]"
                               >
                                 <span className="flex size-9 shrink-0 items-center justify-center rounded-[10px] bg-accentsoft text-accent">

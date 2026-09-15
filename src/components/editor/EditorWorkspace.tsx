@@ -3,6 +3,7 @@ import { useEffect, useLayoutEffect, useMemo, useRef, useState } from "react";
 
 import { usePdfDocument } from "../../lib/pdf";
 import { baseName, downloadBlob } from "../../lib/process";
+import { errorReason, megabytes, startTimer, trackEvent } from "../../lib/analytics";
 import {
   applyTextEdits,
   clearTextEditorCache,
@@ -30,6 +31,13 @@ import { DEFAULT_SHAPE_STYLE, DEFAULT_TEXT_STYLE, MAX_PAGE_WIDTH, MAX_ZOOM, MIN_
 interface EditorWorkspaceProps {
   file: File;
 }
+
+/**
+ * Tool slug this workspace belongs to, for analytics. ToolPage renders it for
+ * /tools/edit-pdf only, and the editor has no run button of its own, so its
+ * exports would otherwise be invisible in the tool-run reports.
+ */
+const EDITOR_TOOL = "edit-pdf";
 
 interface OutlineNode {
   title: string;
@@ -228,6 +236,12 @@ export function EditorWorkspace({ file }: EditorWorkspaceProps) {
 
   const exportPdf = async () => {
     if (exporting || (mode === "text" && textExportDisabled)) return;
+    const elapsed = startTimer();
+    trackEvent("tool_run_start", {
+      tool: EDITOR_TOOL,
+      files: 1,
+      total_mb: megabytes(file.size),
+    });
     setExporting(true);
     setResult(null);
     try {
@@ -254,8 +268,19 @@ export function EditorWorkspace({ file }: EditorWorkspaceProps) {
         blob = await exportEditedPdf(file, annotations, pageWidth);
       }
       downloadBlob(blob, `${baseName(file)}-edited.pdf`);
+      trackEvent("tool_run_success", {
+        tool: EDITOR_TOOL,
+        duration_ms: elapsed(),
+        outputs: 1,
+        output_mb: megabytes(blob.size),
+      });
       setResult("Edited PDF downloaded.");
     } catch (err) {
+      trackEvent("tool_run_error", {
+        tool: EDITOR_TOOL,
+        duration_ms: elapsed(),
+        reason: errorReason(err),
+      });
       setResult(err instanceof Error ? err.message : "Could not export the edited PDF.");
     } finally {
       setExporting(false);
@@ -310,7 +335,14 @@ export function EditorWorkspace({ file }: EditorWorkspaceProps) {
                 <button
                   key={m}
                   type="button"
-                  onClick={() => setMode(m)}
+                  onClick={() => {
+                    setMode(m);
+                    trackEvent("tool_option_change", {
+                      tool: EDITOR_TOOL,
+                      option: "editor_mode",
+                      value: m,
+                    });
+                  }}
                   className={[
                     "rounded-full px-3 py-1 text-[12px] font-medium transition",
                     active ? "bg-paper text-ink shadow-sm" : "text-muted hover:text-ink",

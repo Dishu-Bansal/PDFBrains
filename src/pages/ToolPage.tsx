@@ -16,6 +16,8 @@ import { getTool, relatedTools } from "../data/tools";
 import type { Tool } from "../data/tools";
 import { toolSeo, upcomingToolSeo } from "../lib/seo";
 import { UpcomingTag } from "../components/UpcomingTag";
+import { errorReason, megabytes, startTimer, trackEvent } from "../lib/analytics";
+import type { FileInputMethod } from "../lib/analytics";
 import {
   compressPdfViaApi,
   convertHtmlToPdf,
@@ -37,7 +39,7 @@ import {
   baseName,
   cropPdf,
   deletePages,
-  downloadBlob,
+  downloadBlob as saveBlob,
   extractPages,
   imagesToPdf,
   mergePdfs,
@@ -264,6 +266,20 @@ async function runPdfToFormatConversion(
   return { kind: "ok", message: `Converted ${files.length} files into a ZIP.` };
 }
 
+/**
+ * Byte sizes of the blobs the current run has downloaded. The conversion
+ * helpers above and ToolWorkspace both deliver files through `downloadBlob`
+ * below, so one counter here covers every output; ToolWorkspace empties it
+ * when a run starts.
+ */
+const runOutputs: { bytes: number }[] = [];
+
+/** Counts one download for the run events, then hands off to the real save. */
+function downloadBlob(blob: Blob, name: string): void {
+  runOutputs.push({ bytes: blob.size });
+  saveBlob(blob, name);
+}
+
 function ToolWorkspace({ tool }: { tool: Tool }) {
   const [files, setFiles] = useState<File[]>([]);
   const [activeIndex, setActiveIndex] = useState(0);
@@ -420,15 +436,54 @@ function ToolWorkspace({ tool }: { tool: Tool }) {
     if (files.length > 0 && activeIndex >= files.length) setActiveIndex(0);
   }, [files.length, activeIndex]);
 
-  const addFiles = (next: File[]) => {
+  /**
+   * Reports files that just entered the workspace. `via` falls back to
+   * "unknown" only for state updates we trigger ourselves; Dropzone and
+   * FileStrip pass the real drop/picker provenance.
+   */
+  const trackAdded = (added: File[], via: FileInputMethod) => {
+    if (added.length === 0) return;
+    trackEvent("files_added", {
+      surface: tool.slug,
+      count: added.length,
+      total_mb: megabytes(added.reduce((total, file) => total + file.size, 0)),
+      via,
+    });
+  };
+
+  /**
+   * Reports a user-chosen option, from the handler itself (never on mount, so
+   * defaults stay out of the data). Only enum-ish values are passed in; text
+   * and password fields are never reported.
+   */
+  const trackOption = (option: string, value: string) => {
+    trackEvent("tool_option_change", { tool: tool.slug, option, value });
+  };
+
+  /** Reports adds and removes made through a whole-list callback. `via` comes
+   *  from Dropzone/FileStrip; our own state updates leave it undefined. */
+  const trackListChange = (next: File[], via?: FileInputMethod) => {
+    if (next.length > files.length) trackAdded(next.slice(files.length), via ?? "unknown");
+    else if (next.length < files.length)
+      trackEvent("file_removed", { surface: tool.slug, remaining: next.length });
+  };
+
+  const addFiles = (next: File[], via?: FileInputMethod) => {
+    trackListChange(next, via);
     setFiles(next);
     setResult(null);
     setBusy(false);
   };
 
+  /** FileStrip replaces the list on add, remove and reorder alike. */
+  const stripFiles = (next: File[], via?: FileInputMethod) => {
+    trackListChange(next, via);
+    setFiles(next);
+  };
+
   // HTML to PDF: pick the source automatically from what was uploaded.
-  const setHtmlFiles = (next: File[]) => {
-    addFiles(next);
+  const setHtmlFiles = (next: File[], via?: FileInputMethod) => {
+    addFiles(next, via);
     if (next.length > 0) {
       if (next.some((file) => file.name.toLowerCase().endsWith(".zip"))) setHtmlSource("zip");
       else if (next.some((file) => /\.html?$/i.test(file.name))) setHtmlSource("file");
@@ -436,6 +491,7 @@ function ToolWorkspace({ tool }: { tool: Tool }) {
   };
 
   const clearAll = () => {
+    trackEvent("files_cleared", { surface: tool.slug });
     setFiles([]);
     setSelected(new Set());
     setRotations({});
@@ -448,6 +504,8 @@ function ToolWorkspace({ tool }: { tool: Tool }) {
       if (!response.ok) return;
       const blob = await response.blob();
       const sample = new File([blob], "sample.pdf", { type: "application/pdf" });
+      trackEvent("sample_loaded", { surface: tool.slug });
+      trackAdded([sample], "sample");
       setFiles((prev) => [...prev, sample]);
     } catch {
       /* sample unavailable, ignore */
@@ -606,6 +664,13 @@ function ToolWorkspace({ tool }: { tool: Tool }) {
     if (busy || !canRun) return;
     setBusy(true);
     setResult(null);
+    runOutputs.length = 0;
+    const elapsed = startTimer();
+    trackEvent("tool_run_start", {
+      tool: tool.slug,
+      files: files.length,
+      total_mb: megabytes(files.reduce((total, file) => total + file.size, 0)),
+    });
     try {
       switch (tool.slug) {
         case "merge-pdf": {
@@ -882,7 +947,18 @@ function ToolWorkspace({ tool }: { tool: Tool }) {
         default:
           break;
       }
+      trackEvent("tool_run_success", {
+        tool: tool.slug,
+        duration_ms: elapsed(),
+        outputs: runOutputs.length,
+        output_mb: megabytes(runOutputs.reduce((total, item) => total + item.bytes, 0)),
+      });
     } catch (error) {
+      trackEvent("tool_run_error", {
+        tool: tool.slug,
+        duration_ms: elapsed(),
+        reason: errorReason(error),
+      });
       setResult({
         kind: "error",
         message:
@@ -940,7 +1016,10 @@ function ToolWorkspace({ tool }: { tool: Tool }) {
                   key={option}
                   type="button"
                   aria-pressed={compressLevel === option}
-                  onClick={() => setCompressLevel(option)}
+                  onClick={() => {
+                    setCompressLevel(option);
+                    trackOption("compress_level", option);
+                  }}
                   className={[
                     "rounded-lg px-2 py-1.5 text-[12px] font-medium transition",
                     compressLevel === option
@@ -990,7 +1069,10 @@ function ToolWorkspace({ tool }: { tool: Tool }) {
               <select
                 id="jpg-page-size"
                 value={pageSize}
-                onChange={(event) => setPageSize(event.target.value as PageSize)}
+                onChange={(event) => {
+                  setPageSize(event.target.value as PageSize);
+                  trackOption("jpg_page_size", event.target.value);
+                }}
                 className="mt-2 h-10 w-full rounded-xl border border-line bg-paper px-3 text-[14px] text-ink transition focus:border-accent"
               >
                 {PAGE_SIZES.map((option) => (
@@ -1009,7 +1091,10 @@ function ToolWorkspace({ tool }: { tool: Tool }) {
                     key={option.value}
                     type="button"
                     aria-pressed={jpgOrientation === option.value}
-                    onClick={() => setJpgOrientation(option.value)}
+                    onClick={() => {
+                      setJpgOrientation(option.value);
+                      trackOption("jpg_orientation", option.value);
+                    }}
                     disabled={pageSize === "fit"}
                     className={[
                       "rounded-lg px-2 py-1.5 text-[12px] font-medium transition",
@@ -1033,7 +1118,10 @@ function ToolWorkspace({ tool }: { tool: Tool }) {
                     key={option.label}
                     type="button"
                     aria-pressed={jpgMargin === option.value}
-                    onClick={() => setJpgMargin(option.value)}
+                    onClick={() => {
+                      setJpgMargin(option.value);
+                      trackOption("jpg_margins", String(option.value));
+                    }}
                     disabled={pageSize === "fit"}
                     className={[
                       "rounded-lg px-1 py-1.5 text-[12px] font-medium transition",
@@ -1109,7 +1197,10 @@ function ToolWorkspace({ tool }: { tool: Tool }) {
                 <button
                   type="button"
                   aria-pressed={outputMode === "zip"}
-                  onClick={() => setOutputMode("zip")}
+                  onClick={() => {
+                    setOutputMode("zip");
+                    trackOption("output_mode", "zip");
+                  }}
                   disabled={files.length < 2}
                   className={[
                     "rounded-lg px-2.5 py-1.5 text-left text-[12px] font-medium transition",
@@ -1124,7 +1215,10 @@ function ToolWorkspace({ tool }: { tool: Tool }) {
                 <button
                   type="button"
                   aria-pressed={outputMode === "merge"}
-                  onClick={() => setOutputMode("merge")}
+                  onClick={() => {
+                    setOutputMode("merge");
+                    trackOption("output_mode", "merge");
+                  }}
                   disabled={files.length < 2}
                   className={[
                     "rounded-lg px-2.5 py-1.5 text-left text-[12px] font-medium transition",
@@ -1162,7 +1256,10 @@ function ToolWorkspace({ tool }: { tool: Tool }) {
                     key={option.value}
                     type="button"
                     aria-pressed={splitMode === option.value}
-                    onClick={() => setSplitMode(option.value)}
+                    onClick={() => {
+                      setSplitMode(option.value);
+                      trackOption("split_mode", option.value);
+                    }}
                     className={[
                       "rounded-lg px-2.5 py-1.5 text-left text-[12px] font-medium transition",
                       splitMode === option.value
@@ -1411,7 +1508,10 @@ function ToolWorkspace({ tool }: { tool: Tool }) {
               <select
                 id="num-position"
                 value={numPosition}
-                onChange={(event) => setNumPosition(event.target.value as PageNumberPosition)}
+                onChange={(event) => {
+                  setNumPosition(event.target.value as PageNumberPosition);
+                  trackOption("number_position", event.target.value);
+                }}
                 className="mt-2 h-10 w-full rounded-xl border border-line bg-paper px-3 text-[14px] text-ink transition focus:border-accent"
               >
                 {NUMBER_POSITIONS.map((option) => (
@@ -1459,7 +1559,10 @@ function ToolWorkspace({ tool }: { tool: Tool }) {
                     key={option.value}
                     type="button"
                     aria-pressed={watermarkSize === option.value}
-                    onClick={() => setWatermarkSize(option.value)}
+                    onClick={() => {
+                      setWatermarkSize(option.value);
+                      trackOption("watermark_size", String(option.value));
+                    }}
                     className={[
                       "rounded-lg px-2 py-1.5 text-[12px] font-medium transition",
                       watermarkSize === option.value ? "bg-surface text-ink shadow-sm" : "text-muted hover:text-ink",
@@ -1688,7 +1791,10 @@ function ToolWorkspace({ tool }: { tool: Tool }) {
               <select
                 id="pdfa-format"
                 value={pdfaFormat}
-                onChange={(event) => setPdfaFormat(event.target.value)}
+                onChange={(event) => {
+                  setPdfaFormat(event.target.value);
+                  trackOption("pdfa_format", event.target.value);
+                }}
                 className="mt-2 h-10 w-full rounded-xl border border-line bg-paper px-3 text-[14px] text-ink transition focus:border-accent"
               >
                 {PDFA_FORMATS.map((option) => (
@@ -1788,7 +1894,12 @@ function ToolWorkspace({ tool }: { tool: Tool }) {
         {isScan ? (
           <div className="mt-10 grid gap-6 lg:grid-cols-[7fr_3fr] lg:items-start">
             <div className="min-w-0">
-              <CameraScanner onCapture={(file) => setFiles((prev) => [...prev, file])} />
+              <CameraScanner
+                onCapture={(file) => {
+                  trackAdded([file], "camera");
+                  setFiles((prev) => [...prev, file]);
+                }}
+              />
               {files.length === 0 ? (
                 <button
                   type="button"
@@ -1800,7 +1911,7 @@ function ToolWorkspace({ tool }: { tool: Tool }) {
                 </button>
               ) : (
                 <div className="mt-6">
-                  <FileStrip files={files} onFilesChange={setFiles} accept={tool.accept} />
+                  <FileStrip files={files} onFilesChange={stripFiles} accept={tool.accept} />
                 </div>
               )}
               <input
@@ -1812,8 +1923,10 @@ function ToolWorkspace({ tool }: { tool: Tool }) {
                 tabIndex={-1}
                 aria-hidden="true"
                 onChange={(event) => {
-                  if (event.target.files?.length) {
-                    setFiles((prev) => [...prev, ...Array.from(event.target.files!)]);
+                  const picked = event.target.files ? Array.from(event.target.files) : [];
+                  if (picked.length > 0) {
+                    trackAdded(picked, "picker");
+                    setFiles((prev) => [...prev, ...picked]);
                   }
                   event.target.value = "";
                 }}
@@ -1841,7 +1954,7 @@ function ToolWorkspace({ tool }: { tool: Tool }) {
           <div className="mt-10">
             {hasFiles ? (
               <>
-                <FileStrip files={files} onFilesChange={setFiles} accept={tool.accept} size="compact" />
+                <FileStrip files={files} onFilesChange={stripFiles} accept={tool.accept} size="compact" />
                 <div className="mt-4 h-[calc(100dvh-360px)] min-h-[540px]">
                   <EditorWorkspace
                     key={`${activeFile?.name}-${activeFile?.size}-${activeFile?.lastModified}`}
@@ -1884,7 +1997,7 @@ function ToolWorkspace({ tool }: { tool: Tool }) {
             <div className="min-w-0">
               <FileStrip
                 files={files}
-                onFilesChange={setFiles}
+                onFilesChange={stripFiles}
                 reorderable={
                   tool.slug === "merge-pdf" ||
                   tool.slug === "jpg-to-pdf" ||
@@ -1941,6 +2054,7 @@ function ToolWorkspace({ tool }: { tool: Tool }) {
                 <Link
                   key={item.slug}
                   to={`/tools/${item.slug}`}
+                  onClick={() => trackEvent("tool_open", { tool: item.slug, source: "related" })}
                   className="group flex items-center gap-3 rounded-2xl border border-line bg-surface p-4 transition hover:border-linestrong active:scale-[0.99]"
                 >
                   <span className="flex size-9 shrink-0 items-center justify-center rounded-[10px] bg-accentsoft text-accent">
@@ -2028,6 +2142,7 @@ function UpcomingTool({ tool }: { tool: Tool }) {
                 <Link
                   key={item.slug}
                   to={`/tools/${item.slug}`}
+                  onClick={() => trackEvent("tool_open", { tool: item.slug, source: "related" })}
                   className="group flex items-center gap-3 rounded-2xl border border-line bg-surface p-4 transition hover:border-linestrong active:scale-[0.99]"
                 >
                   <span className="flex size-9 shrink-0 items-center justify-center rounded-[10px] bg-accentsoft text-accent">

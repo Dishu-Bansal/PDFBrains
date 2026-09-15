@@ -7,6 +7,7 @@ import { ThemeToggle } from "./ThemeToggle";
 import { UpcomingTag } from "./UpcomingTag";
 import { CATEGORIES, getTool, toolsByCategory } from "../data/tools";
 import type { Category, Tool } from "../data/tools";
+import { trackEvent } from "../lib/analytics";
 import { isFeedbackEnabled, requestFeedback } from "../lib/feedback";
 
 const QUICK_SLUGS = ["merge-pdf", "split-pdf", "compress-pdf"];
@@ -17,15 +18,19 @@ type OpenMenu = "convert" | "all" | null;
 
 function DropdownLink({
   tool,
+  source,
   onNavigate,
 }: {
   tool: Tool;
+  source: "nav_convert" | "nav_all";
   onNavigate: () => void;
 }) {
   if (tool.upcoming) {
     return (
       <span
         aria-disabled="true"
+        // Still not navigable: the click only measures demand for the tool.
+        onClick={() => trackEvent("tool_blocked", { tool: tool.slug, reason: "upcoming", source })}
         className="flex cursor-not-allowed items-center justify-between gap-2 rounded-lg border border-line/60 bg-raised/80 px-2.5 py-1.5 text-[13px] text-muted/80 select-none"
       >
         <span className="truncate">{tool.name}</span>
@@ -36,7 +41,10 @@ function DropdownLink({
   return (
     <Link
       to={`/tools/${tool.slug}`}
-      onClick={onNavigate}
+      onClick={() => {
+        trackEvent("tool_open", { tool: tool.slug, source });
+        onNavigate();
+      }}
       className="block rounded-lg px-2.5 py-1.5 text-[13px] text-muted transition hover:bg-paper hover:text-ink"
     >
       {tool.name}
@@ -105,6 +113,7 @@ export function Nav() {
           <Logo />
           <Link
             to="/ai-assist"
+            onClick={() => trackEvent("ai_assist_open", { source: "nav_quick" })}
             className="inline-flex h-9 shrink-0 items-center gap-1.5 rounded-full border border-accent bg-accentsoft px-4 text-[14px] font-medium text-accentstrong transition hover:bg-accent/15 active:scale-[0.97]"
           >
             <Sparkle size={15} weight="bold" />
@@ -115,6 +124,7 @@ export function Nav() {
               <Link
                 key={tool.slug}
                 to={`/tools/${tool.slug}`}
+                onClick={() => trackEvent("tool_open", { tool: tool.slug, source: "nav_quick" })}
                 className="inline-flex h-9 items-center rounded-full border border-line bg-surface px-4 text-[14px] font-medium text-ink transition hover:border-linestrong active:scale-[0.97]"
               >
                 {tool.name}
@@ -137,7 +147,12 @@ export function Nav() {
                       {category}
                     </p>
                     {toolsByCategory(category).map((tool) => (
-                      <DropdownLink key={tool.slug} tool={tool} onNavigate={closeMenus} />
+                      <DropdownLink
+                        key={tool.slug}
+                        tool={tool}
+                        source="nav_convert"
+                        onNavigate={closeMenus}
+                      />
                     ))}
                   </div>
                 ))}
@@ -159,7 +174,12 @@ export function Nav() {
                     </p>
                     <div className="mt-1.5">
                       {toolsByCategory(category).map((tool) => (
-                        <DropdownLink key={tool.slug} tool={tool} onNavigate={closeMenus} />
+                        <DropdownLink
+                          key={tool.slug}
+                          tool={tool}
+                          source="nav_all"
+                          onNavigate={closeMenus}
+                        />
                       ))}
                     </div>
                   </div>
@@ -199,7 +219,10 @@ export function Nav() {
           <div className="mx-auto max-w-[1400px] px-4 py-4 sm:px-6">
             <Link
               to="/ai-assist"
-              onClick={closeMenus}
+              onClick={() => {
+                closeMenus();
+                trackEvent("ai_assist_open", { source: "nav_mobile" });
+              }}
               className="inline-flex h-10 items-center gap-1.5 rounded-full border border-accent bg-accentsoft px-5 text-[14px] font-medium text-accentstrong"
             >
               <Sparkle size={15} weight="bold" />
@@ -223,7 +246,10 @@ export function Nav() {
                 <Link
                   key={tool.slug}
                   to={`/tools/${tool.slug}`}
-                  onClick={closeMenus}
+                  onClick={() => {
+                    closeMenus();
+                    trackEvent("tool_open", { tool: tool.slug, source: "nav_mobile" });
+                  }}
                   className="inline-flex h-9 items-center rounded-full border border-line bg-surface px-4 text-[14px] font-medium text-ink"
                 >
                   {tool.name}
@@ -240,6 +266,14 @@ export function Nav() {
                       <span
                         key={tool.slug}
                         aria-disabled="true"
+                        // Still not navigable: the click only measures demand for the tool.
+                        onClick={() =>
+                          trackEvent("tool_blocked", {
+                            tool: tool.slug,
+                            reason: "upcoming",
+                            source: "nav_mobile",
+                          })
+                        }
                         className="inline-flex cursor-not-allowed items-center gap-2 rounded-full bg-raised/80 py-1 pl-3 pr-1.5 text-[13px] text-muted/80 select-none"
                       >
                         <span className="truncate">{tool.name}</span>
@@ -249,7 +283,10 @@ export function Nav() {
                       <Link
                         key={tool.slug}
                         to={`/tools/${tool.slug}`}
-                        onClick={closeMenus}
+                        onClick={() => {
+                          closeMenus();
+                          trackEvent("tool_open", { tool: tool.slug, source: "nav_mobile" });
+                        }}
                         className="rounded-full bg-raised px-3 py-1.5 text-[13px] text-ink transition hover:text-accent"
                       >
                         {tool.name}

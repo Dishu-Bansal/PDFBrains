@@ -1,3 +1,4 @@
+import { getTool } from "../data/tools";
 import type { Tool } from "../data/tools";
 
 /** Canonical production origin. Keep in sync with robots.txt + sitemap.xml. */
@@ -58,4 +59,21 @@ export function toolSeo(tool: Tool): SeoMeta {
 export function upcomingToolSeo(tool: Tool): SeoMeta {
   const meta = toolSeo(tool);
   return { ...meta, robots: "noindex, nofollow" };
+}
+
+/**
+ * The document title a path will end up with, derived from the same metadata
+ * <Seo/> renders. Analytics reports this instead of reading document.title,
+ * which lags a route change by one navigation (Seo's effect runs after the
+ * analytics effect).
+ */
+export function titleForPath(pathname: string): string {
+  if (pathname === "/") return HOME_SEO.title;
+  if (pathname === "/ai-assist") return AI_ASSIST_SEO.title;
+  const toolMatch = pathname.match(/^\/tools\/([a-z0-9-]+)/);
+  if (toolMatch) {
+    const tool = getTool(toolMatch[1]);
+    if (tool) return toolSeo(tool).title;
+  }
+  return NOT_FOUND_SEO.title;
 }

@@ -7,6 +7,7 @@ import { PdfPageThumb } from "./PdfPageThumb";
 import { usePdfDocument } from "../lib/pdf";
 import { resolvePageDimensions } from "../lib/process";
 import type { PageOrientation, PageSize } from "../lib/process";
+import type { FileInputMethod } from "../lib/analytics";
 
 export type StripSize = "compact" | "large";
 
@@ -19,7 +20,8 @@ export interface ImagePageLayout {
 
 interface FileStripProps {
   files: File[];
-  onFilesChange: (files: File[]) => void;
+  /** `via` reports how added files arrived (drop vs picker). */
+  onFilesChange: (files: File[], via?: FileInputMethod) => void;
   /** Drag cards/chips to reorder (merge, jpg-to-pdf, converters). */
   reorderable?: boolean;
   /** Cards act as file tabs (page tools). */
@@ -244,9 +246,9 @@ export function FileStrip({
     onFilesChange(files.filter((_, i) => i !== index));
   };
 
-  const addFiles = (list: FileList | null) => {
+  const addFiles = (list: FileList | null, via: FileInputMethod) => {
     if (!list || list.length === 0) return;
-    onFilesChange([...files, ...Array.from(list)]);
+    onFilesChange([...files, ...Array.from(list)], via);
   };
 
   const onDrop = (event: DragEvent<HTMLLIElement>, to: number) => {
@@ -358,7 +360,7 @@ export function FileStrip({
           event.preventDefault();
           setAddHover(false);
           if (dragIndex === null && event.dataTransfer.files.length > 0) {
-            addFiles(event.dataTransfer.files);
+            addFiles(event.dataTransfer.files, "drop");
           }
         }}
       >
@@ -457,7 +459,7 @@ export function FileStrip({
           multiple
           accept={accept}
           className="sr-only"
-          onChange={(event) => addFiles(event.target.files)}
+          onChange={(event) => addFiles(event.target.files, "picker")}
           tabIndex={-1}
           aria-hidden="true"
         />

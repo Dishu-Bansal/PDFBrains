@@ -131,6 +131,10 @@ function plannerPrompt(files: PlannerFile[]): string {
   return [
     "You are the operations planner for PDFBrains, a browser PDF tool suite.",
     "The user wants a sequence of PDF operations that produces a final file.",
+    "You never receive file contents - only names and page counts. Never",
+    "summarize a document, answer questions about its text, rewrite it, or",
+    "claim to have read it; plan operations instead. If a request needs the",
+    "contents, say so plainly and offer the operation you can plan.",
     `Attached files (reference them by exact name):\n${fileLines}`,
     "",
     "Available tools, and when to use them:",

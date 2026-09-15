@@ -29,9 +29,9 @@ export const HOME_SEO: SeoMeta = {
 };
 
 export const AI_ASSIST_SEO: SeoMeta = {
-  title: "AI Assist - Chat with your PDFs | PDFBrains",
+  title: "AI Assist - Plan PDF jobs in plain words | PDFBrains",
   description:
-    "Ask questions, summarize, and rewrite PDFs with AI Assist. Attach a file and get answers in seconds. No sign-up, files stay in your browser.",
+    "Tell AI Assist what to do with a PDF - split, merge, compress, convert - and it plans the steps you approve and run. It never reads your file contents.",
   canonical: canonicalFor("/ai-assist"),
 };
 

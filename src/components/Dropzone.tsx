@@ -2,11 +2,14 @@ import { FilePdf, UploadSimple, X } from "@phosphor-icons/react";
 import { useRef, useState } from "react";
 import type { DragEvent, KeyboardEvent } from "react";
 
+import type { FileInputMethod } from "../lib/analytics";
+
 const FORMAT_PILLS = ["PDF", "DOCX", "JPG", "PNG", "XLSX"];
 
 interface DropzoneProps {
   files: File[];
-  onFiles: (files: File[]) => void;
+  /** `via` reports how the files arrived, so callers can measure drop vs browse. */
+  onFiles: (files: File[], via?: FileInputMethod) => void;
   variant?: "hero" | "full";
   accept?: string;
 }
@@ -22,15 +25,15 @@ export function Dropzone({ files, onFiles, variant = "full", accept }: DropzoneP
 
   const hero = variant === "hero";
 
-  const acceptList = (list: FileList | null) => {
+  const acceptList = (list: FileList | null, via: FileInputMethod) => {
     if (!list || list.length === 0) return;
-    onFiles(Array.from(list));
+    onFiles(Array.from(list), via);
   };
 
   const onDrop = (event: DragEvent<HTMLDivElement>) => {
     event.preventDefault();
     setDragging(false);
-    acceptList(event.dataTransfer.files);
+    acceptList(event.dataTransfer.files, "drop");
   };
 
   const onKeyDown = (event: KeyboardEvent<HTMLDivElement>) => {
@@ -91,7 +94,7 @@ export function Dropzone({ files, onFiles, variant = "full", accept }: DropzoneP
           multiple
           accept={accept}
           className="sr-only"
-          onChange={(event) => acceptList(event.target.files)}
+          onChange={(event) => acceptList(event.target.files, "picker")}
           tabIndex={-1}
           aria-hidden="true"
         />

@@ -4,16 +4,20 @@ import { Link, useNavigate } from "react-router-dom";
 
 import { Dropzone } from "./Dropzone";
 import { stashAiFiles } from "../lib/aiHandoff";
+import { trackEvent } from "../lib/analytics";
+import type { FileInputMethod } from "../lib/analytics";
 
 export function Hero() {
   const reduce = useReducedMotion();
   const navigate = useNavigate();
 
   // Files dropped here skip the catalog: they open straight in AI Assist,
-  // attached and ready for instructions.
-  const onHeroFiles = (files: File[]) => {
+  // attached and ready for instructions. This is an AI Assist entry that
+  // never clicks the CTA below, so it is reported as one.
+  const onHeroFiles = (files: File[], via: FileInputMethod = "unknown") => {
     if (files.length === 0) return;
-    stashAiFiles(files);
+    trackEvent("ai_assist_open", { source: "hero" });
+    stashAiFiles(files, via);
     navigate("/ai-assist");
   };
 
@@ -46,12 +50,18 @@ export function Hero() {
           <motion.div {...fade(0.16)} className="mt-9 flex flex-wrap items-center gap-3">
             <Link
               to="/#tools"
+              onClick={() =>
+                trackEvent("hero_cta", { label: "Browse tools", destination: "/#tools" })
+              }
               className="inline-flex h-12 items-center rounded-full bg-ink px-7 text-[16px] font-medium text-paper transition hover:opacity-90 active:scale-[0.97]"
             >
               Browse tools
             </Link>
             <Link
               to="/ai-assist"
+              onClick={() =>
+                trackEvent("hero_cta", { label: "Try AI Assist", destination: "/ai-assist" })
+              }
               className="inline-flex h-12 items-center gap-2 rounded-full border border-line bg-surface px-7 text-[16px] font-medium text-ink transition hover:border-accent hover:text-accentstrong active:scale-[0.97]"
             >
               <Sparkle size={18} weight="regular" />

@@ -15,6 +15,8 @@ import type { DragEvent, KeyboardEvent } from "react";
 
 import { Nav } from "../components/Nav";
 import { Seo } from "../components/Seo";
+import { errorReason, megabytes, startTimer, trackEvent } from "../lib/analytics";
+import type { FileInputMethod } from "../lib/analytics";
 import { AI_ASSIST_SEO } from "../lib/seo";
 import { takeAiFiles } from "../lib/aiHandoff";
 import { isLlmConfigured } from "../lib/llm";
@@ -108,6 +110,11 @@ function chipForFile(file: ChatFile): string {
   return `@${file.name}`;
 }
 
+/** Comma-joined tool slugs in step order, for analytics. */
+function planToolNames(steps: PlanStep[]): string {
+  return steps.map((step) => step.tool).join(",");
+}
+
 /**
  * AI Assist: a chat interface for asking questions about documents. Files are
  * dropped or attached in the composer and referenced in the message with
@@ -152,18 +159,27 @@ export function AiAssist() {
     }
   }, [mentionQuery, mentionIndex, files]);
 
-  const addFiles = (list: FileList | File[] | null) => {
+  const addFiles = (list: FileList | File[] | null, via: FileInputMethod = "unknown") => {
     if (!list || list.length === 0) return;
     const next = Array.from(list).map((file) => ({ name: file.name, size: file.size, file }));
     setFiles((prev) => [...prev, ...next]);
+    trackEvent("files_added", {
+      surface: "ai_assist",
+      count: next.length,
+      total_mb: megabytes(next.reduce((total, file) => total + file.size, 0)),
+      via,
+    });
   };
 
-  // Files dropped on the home hero arrive via the handoff stash.
+  // Files dropped on the home hero arrive via the handoff stash, which knows
+  // whether they were dropped or browsed for.
   useEffect(() => {
-    addFiles(takeAiFiles());
+    const handoff = takeAiFiles();
+    if (handoff) addFiles(handoff.files, handoff.via);
   }, []);
 
   const removeFile = (index: number) => {
+    trackEvent("file_removed", { surface: "ai_assist", remaining: files.length - 1 });
     setFiles((prev) => prev.filter((_, i) => i !== index));
   };
 
@@ -239,7 +255,17 @@ export function AiAssist() {
     setFiles([]);
     setTyping(true);
 
+    // The planner route is only actually taken when the AI is configured;
+    // the canned "not connected" reply is a plain chat answer.
+    const mode = configured && usePlanner ? "planner" : "chat";
+    trackEvent("ai_message_sent", {
+      mode,
+      files: attach.length,
+      prompt_chars: content.length,
+    });
+
     if (!configured) {
+      trackEvent("ai_error", { stage: "chat", reason: "not_configured" });
       window.setTimeout(() => {
         setTyping(false);
         appendMessage({
@@ -262,6 +288,11 @@ export function AiAssist() {
           fileInfos,
           toPlannerHistory(messages).slice(-24)
         );
+        trackEvent("ai_plan_created", {
+          steps: steps.length,
+          tools: planToolNames(steps),
+          files: planFiles.length,
+        });
         setTyping(false);
         appendMessage({
           id: nextMessageId(),
@@ -303,6 +334,10 @@ export function AiAssist() {
       }
       const detail = err instanceof Error ? err.message : "The AI request failed. Please try again.";
       appendMessage({ id: nextMessageId(), role: "assistant", text: detail, files: planFiles, error: true });
+      trackEvent("ai_error", {
+        stage: usePlanner ? "plan" : "chat",
+        reason: errorReason(err),
+      });
     }
   };
 
@@ -312,25 +347,42 @@ export function AiAssist() {
   const runPlan = async (message: ChatMessage) => {
     if (!message.steps || message.planStatus !== "pending") return;
     const messageId = message.id;
+    const steps = message.steps;
+    const elapsed = startTimer();
+    let currentStep = 0;
+    let currentTool = "";
+    trackEvent("ai_plan_run_start", { steps: steps.length, tools: planToolNames(steps) });
     setMessages((prev) =>
       prev.map((m) => (m.id === messageId ? { ...m, planStatus: "running", planStepIndex: 0 } : m))
     );
     const sources = new Map<string, Blob>();
     message.files.forEach((file) => sources.set(file.name, file.file));
     try {
-      const { finalName, finalBlob } = await executePlan(message.steps, sources, (index) => {
+      const { finalName, finalBlob } = await executePlan(steps, sources, (index, step) => {
+        currentStep = index + 1;
+        currentTool = step.tool;
         setMessages((prev) =>
           prev.map((m) => (m.id === messageId ? { ...m, planStepIndex: index } : m))
         );
+        trackEvent("ai_plan_step_start", {
+          step: index + 1,
+          total_steps: steps.length,
+          tool: step.tool,
+        });
       });
       blobsRef.current.set(messageId, finalBlob);
       setMessages((prev) =>
         prev.map((m) =>
           m.id === messageId
-            ? { ...m, planStatus: "done", planFinalName: finalName, planStepIndex: message.steps!.length }
+            ? { ...m, planStatus: "done", planFinalName: finalName, planStepIndex: steps.length }
             : m
         )
       );
+      trackEvent("ai_plan_run_success", {
+        steps: steps.length,
+        duration_ms: elapsed(),
+        output_mb: megabytes(finalBlob.size),
+      });
     } catch (err) {
       setMessages((prev) =>
         prev.map((m) =>
@@ -343,22 +395,36 @@ export function AiAssist() {
             : m
         )
       );
+      trackEvent("ai_plan_run_error", {
+        steps: steps.length,
+        step: currentStep,
+        tool: currentTool,
+        duration_ms: elapsed(),
+        reason: errorReason(err),
+      });
     }
   };
 
-  const dismissPlan = (messageId: number) => {
-    setMessages((prev) => prev.filter((m) => m.id !== messageId));
+  const dismissPlan = (message: ChatMessage) => {
+    trackEvent("ai_plan_discarded", { steps: message.steps?.length ?? 0 });
+    setMessages((prev) => prev.filter((m) => m.id !== message.id));
   };
 
   const downloadPlan = (message: ChatMessage) => {
     const blob = blobsRef.current.get(message.id);
-    if (blob && message.planFinalName) downloadBlob(blob, message.planFinalName);
+    if (blob && message.planFinalName) {
+      trackEvent("ai_result_downloaded", {
+        steps: message.steps?.length ?? 0,
+        output_mb: megabytes(blob.size),
+      });
+      downloadBlob(blob, message.planFinalName);
+    }
   };
 
   const onDrop = (event: DragEvent<HTMLDivElement>) => {
     event.preventDefault();
     setDragging(false);
-    addFiles(event.dataTransfer.files);
+    addFiles(event.dataTransfer.files, "drop");
   };
 
   // ---- @-mention autocomplete for attached files ----
@@ -530,11 +596,16 @@ export function AiAssist() {
   };
 
   const clearChat = () => {
+    // Clearing the chat does not drop composer attachments (pre-existing
+    // behaviour), so report how many were still staged rather than claiming
+    // they were cleared.
+    trackEvent("ai_chat_cleared", { messages: messages.length, files: files.length });
     setMessages([]);
     setTyping(false);
   };
 
   const pickSuggestion = (text: string) => {
+    trackEvent("ai_suggestion_click", { surface: "ai_assist" });
     const div = composerRef.current;
     if (!div) return;
     div.textContent = text;
@@ -600,7 +671,7 @@ export function AiAssist() {
                     key={message.id}
                     message={message}
                     onRun={() => runPlan(message)}
-                    onDismiss={() => dismissPlan(message.id)}
+                    onDismiss={() => dismissPlan(message)}
                     onDownload={() => downloadPlan(message)}
                   />
                 ) : (
@@ -741,7 +812,7 @@ export function AiAssist() {
             tabIndex={-1}
             aria-hidden="true"
             onChange={(event) => {
-              addFiles(event.target.files);
+              addFiles(event.target.files, "picker");
               event.target.value = "";
             }}
           />

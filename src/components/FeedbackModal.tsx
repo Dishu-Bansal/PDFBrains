@@ -3,6 +3,7 @@ import { useEffect, useState } from "react";
 import { useLocation } from "react-router-dom";
 
 import { getTool } from "../data/tools";
+import { errorReason, trackEvent } from "../lib/analytics";
 import { submitFeedback, subscribeFeedback } from "../lib/feedback";
 import type { FeedbackContext, FeedbackType } from "../lib/feedback";
 
@@ -80,12 +81,19 @@ function FeedbackDialog({
     return () => document.removeEventListener("keydown", onKeyDown);
   }, [onClose]);
 
+  useEffect(() => {
+    // "surface" is which form was opened (feature request vs bug report).
+    trackEvent("feedback_open", { surface: initialType });
+  }, [initialType]);
+
   const canSend = title.trim().length > 0 && details.trim().length > 0 && status !== "sending";
 
   const send = async () => {
     if (!canSend) return;
     setStatus("sending");
     setError("");
+    // The form collects no rating, so the parameter stays empty.
+    trackEvent("feedback_submit", { surface: type, rating: "" });
     try {
       await submitFeedback({
         type,
@@ -95,9 +103,11 @@ function FeedbackDialog({
         context: contextFor(route),
       });
       setStatus("sent");
+      trackEvent("feedback_success", { surface: type });
     } catch (err) {
       setError(err instanceof Error ? err.message : "Sending failed. Please try again.");
       setStatus("error");
+      trackEvent("feedback_error", { surface: type, reason: errorReason(err) });
     }
   };
 

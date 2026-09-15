@@ -12,7 +12,8 @@
     "prerender": "node scripts/prerender.mjs",
     "build": "tsc --noEmit && npm run build:client && npm run build:server && npm run prerender",
     "preview": "vite preview",
-    "sample": "node scripts/make-sample.mjs"
+    "sample": "node scripts/make-sample.mjs",
+    "test:analytics": "node scripts/test-analytics.mjs"
   },
   "dependencies": {
     "@fontsource-variable/jetbrains-mono": "^5.1.1",

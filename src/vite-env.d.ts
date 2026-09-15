@@ -9,6 +9,10 @@ interface ImportMetaEnv {
   readonly VITE_DEEPSEEK_API_KEY?: string;
   readonly VITE_DEEPSEEK_BASE_URL?: string;
   readonly VITE_DEEPSEEK_MODEL?: string;
+  /** GA4 measurement ID (G-XXXXXXXXXX). Unset disables analytics entirely. */
+  readonly VITE_GA_MEASUREMENT_ID?: string;
+  /** "true" forces reporting from dev/local hosts, flagged with debug_mode. */
+  readonly VITE_GA_DEBUG?: string;
 }
 
 interface ImportMeta {

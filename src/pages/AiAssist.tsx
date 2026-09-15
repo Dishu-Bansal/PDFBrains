@@ -63,10 +63,14 @@ const SUGGESTIONS = [
 ];
 
 const SYSTEM_PROMPT =
-  "You are AI Assist inside PDFBrains, a browser PDF tool suite. Users attach " +
-  "files and reference them in their message with @mentions. When a request " +
-  "needs a file, call the matching tool with the referenced file name; never " +
-  "guess file contents. Answer clearly and concisely.";
+  "You are AI Assist inside PDFBrains, a browser PDF tool suite. You plan PDF " +
+  "operations - merge, split, compress, repair, OCR, convert, rotate, watermark " +
+  "and so on - from the user's instructions and the attached files' names and " +
+  "page counts. You never receive file contents: never summarize a document, " +
+  "answer questions about its text, rewrite it, or claim to have read it, and " +
+  "never guess file contents. If a request needs the contents, say plainly that " +
+  "you cannot read file contents and offer the operation you can plan instead. " +
+  "Refer to files by their exact name and answer briefly.";
 
 const ZWSP = "\u200b";
 
@@ -101,9 +105,9 @@ async function computePlannerFiles(files: ChatFile[]): Promise<PlannerFile[]> {
 function unconfiguredReply(text: string, files: ChatFile[]): string {
   if (files.length > 0) {
     const names = files.map((file) => file.name).join(", ");
-    return `I can see ${files.length} file${files.length === 1 ? "" : "s"} attached (${names}), but I'm not connected to the AI backend yet. Add your DeepSeek API key as VITE_DEEPSEEK_API_KEY in .env.local and restart the dev server, then I'll answer for real.`;
+    return `I can see ${files.length} file${files.length === 1 ? "" : "s"} attached (${names}), but I'm not connected to the AI backend yet. Add your DeepSeek API key as VITE_DEEPSEEK_API_KEY in .env.local and restart the dev server, then I can plan for real.`;
   }
-  return `You asked: "${text}". I'm not connected to the AI backend yet. Add your DeepSeek API key as VITE_DEEPSEEK_API_KEY in .env.local and restart the dev server, then I'll answer for real.`;
+  return `You asked: "${text}". I'm not connected to the AI backend yet. Add your DeepSeek API key as VITE_DEEPSEEK_API_KEY in .env.local and restart the dev server, then I can plan for real.`;
 }
 
 function chipForFile(file: ChatFile): string {
@@ -116,12 +120,13 @@ function planToolNames(steps: PlanStep[]): string {
 }
 
 /**
- * AI Assist: a chat interface for asking questions about documents. Files are
- * dropped or attached in the composer and referenced in the message with
- * @mentions, which render as chips (Backspace removes a whole chip). File
- * contents are not extracted client-side; the LLM works with files through
- * the tool registry instead. Tool calls resolve through the LLM layer, so the
- * ~20 PDF tools can plug in later.
+ * AI Assist: describe a PDF *operation* in plain words and the model proposes
+ * a plan the user approves, which then runs locally. Files are dropped or
+ * attached in the composer and referenced in the message with @mentions, which
+ * render as chips (Backspace removes a whole chip). File contents are never
+ * sent to the model — it only ever sees names and page counts — so asking it to
+ * summarize or answer questions about a document is out of scope by design.
+ * Tool calls resolve through the LLM layer, so the PDF tools can plug in later.
  */
 export function AiAssist() {
   const [messages, setMessages] = useState<ChatMessage[]>([]);
@@ -634,7 +639,8 @@ export function AiAssist() {
             <div>
               <h1 className="text-2xl font-semibold tracking-tight">AI Assist</h1>
               <p className="mt-0.5 text-[14px] leading-relaxed text-muted">
-                Ask questions about your documents. Reference attached files in your message with @mentions.
+                Describe the PDF job you want - merge, split, compress, convert and more.
+                Reference attached files with @mentions; the AI never reads their contents.
               </p>
             </div>
           </div>
@@ -770,7 +776,7 @@ export function AiAssist() {
               contentEditable
               role="textbox"
               aria-multiline="true"
-              data-placeholder="Ask about your documents..."
+              data-placeholder="Describe the PDF job you want..."
               onInput={() => {
                 syncDraft();
                 updateMention();
@@ -834,11 +840,13 @@ function WelcomePanel({
       <span className="flex size-14 items-center justify-center rounded-2xl bg-accentsoft text-accent">
         <Sparkle size={28} weight="regular" />
       </span>
-      <h2 className="mt-4 text-xl font-semibold tracking-tight">Ask anything about your documents</h2>
+      <h2 className="mt-4 text-xl font-semibold tracking-tight">
+        Tell AI Assist what to do with your PDFs
+      </h2>
       <p className="mt-1.5 max-w-[46ch] text-[14px] leading-relaxed text-muted">
-        Drop PDFs into the chat, tell it what you want, and it plans the
-        operations step by step for your approval before running them.
-        The AI only ever sees file names — never contents. A few heavy tasks
+        Drop PDFs in, describe the job - split, merge, compress, convert, rotate -
+        and it plans the operations step by step for your approval before anything
+        runs. The AI only ever sees file names, never contents. A few heavy tasks
         (like OCR) run on our server instead, and those files are deleted the
         moment the task finishes.
       </p>

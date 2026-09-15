@@ -71,11 +71,11 @@ export function Dropzone({ files, onFiles, variant = "full", accept }: DropzoneP
           <UploadSimple size={24} weight="regular" />
         </span>
         <span className="text-lg font-semibold tracking-tight">
-          {dragging ? "Release to drop" : hero ? "Drop files to ask AI" : "Drop files here"}
+          {dragging ? "Release to drop" : hero ? "Drop files to plan a PDF job" : "Drop files here"}
         </span>
         <span className="max-w-[34ch] text-sm text-muted">
           {hero
-            ? "or click to browse. They'll open in AI Assist, ready for your instructions."
+            ? "or click to browse. They open in AI Assist, where you describe the job."
             : "or click to browse from your device. Multiple files welcome."}
         </span>
         <span className="mt-1 flex flex-wrap items-center justify-center gap-1.5">

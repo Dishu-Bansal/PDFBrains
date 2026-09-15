@@ -43,8 +43,8 @@ export function Hero() {
             className="mt-6 max-w-[46ch] text-lg leading-relaxed text-muted"
           >
             Merge, split, compress and convert in seconds — or drop your files and tell{" "}
-            <span className="font-medium text-ink">AI Assist</span> what you want in plain
-            words. No installs, no sign-up, no waiting.
+            <span className="font-medium text-ink">AI Assist</span> which job you want done.
+            No installs, no sign-up, no waiting.
           </motion.p>
 
           <motion.div {...fade(0.16)} className="mt-9 flex flex-wrap items-center gap-3">
